@@ -1,0 +1,25 @@
+# 忽略构建产物
+dict_new
+*.exe
+
+# 忽略缓存和日志
+cache/
+logs/
+
+# 忽略开发工具配置
+.vscode/
+.idea/
+
+# 忽略测试文件
+*_test.go
+
+# 忽略Git
+.git/
+.gitignore
+
+# 忽略README（不需要在Docker镜像中）
+README.md
+
+# 忽略Docker相关文件
+Dockerfile
+.dockerignore

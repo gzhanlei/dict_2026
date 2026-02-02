@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>姓名地名查询</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>世界人名地名译法查询工具</h1>
+        </header>
+
+        <main>
+            <section class="search-section">
+                <div class="input-group">
+                    <input 
+                        type="text" 
+                        id="searchInput" 
+                        placeholder="输入人名或地名"
+                        autocomplete="off"
+                    >
+                    <button id="searchBtn" type="button">查询</button>
+                </div>
+
+                <div class="radio-group">
+                    <label class="radio-label">
+                        <input type="radio" name="searchType" value="names">
+                        <span class="radio-custom"></span>
+                        查人名
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="searchType" value="places">
+                        <span class="radio-custom"></span>
+                        查地名
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="searchType" value="both" checked>
+                        <span class="radio-custom"></span>
+                        同时查人名地名
+                    </label>
+                </div>
+            </section>
+
+            <section class="loading-section" id="loadingSection" style="display: none;">
+                <div class="loading-spinner"></div>
+                <p>查询中...</p>
+            </section>
+
+            <section class="results-section" id="resultsSection" style="display: none;">
+                <div id="resultsContainer"></div>
+            </section>
+
+            <section class="error-section" id="errorSection" style="display: none;">
+                <div class="error-message" id="errorMessage"></div>
+            </section>
+        </main>
+
+        <footer>
+            <p>&copy; 2024 姓名地名查询系统</p>
+        </footer>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

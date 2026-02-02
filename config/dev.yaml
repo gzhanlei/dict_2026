@@ -1,0 +1,26 @@
+database:
+  host: "localhost"
+  port: 3306
+  username: "root"
+  password: ""
+  dbname: "mysql"
+
+tables:
+  places: "places_new"
+  names: "names_241220"
+
+fields:
+  query_field: "name_for_query_251202"
+  name_field: "name"
+  nation_field: "nation"
+  translation_field: "translation"
+
+server:
+  port: 8080
+
+cache:
+  directory: "./cache"
+  expiration: 3600
+
+log:
+  directory: "./logs"
