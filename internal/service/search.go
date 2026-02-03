@@ -298,6 +298,31 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 		allResults = mergeAndDeduplicateResults(slices...)
 	}
 
+	// 对后续 tabs 去重：排除已在第一个 tab 中的记录
+	if len(queryParts) > 1 {
+		firstKey := queryParts[0]
+		firstResults := tabResults[firstKey]
+		firstKeys := make(map[string]bool)
+		for _, r := range firstResults {
+			key := r.Name + "\x00" + r.Nation + "\x00" + r.Translation
+			firstKeys[key] = true
+		}
+
+		for i := 1; i < len(queryParts); i++ {
+			query := queryParts[i]
+			if results, ok := tabResults[query]; ok {
+				var filtered []SearchResult
+				for _, r := range results {
+					key := r.Name + "\x00" + r.Nation + "\x00" + r.Translation
+					if !firstKeys[key] {
+						filtered = append(filtered, r)
+					}
+				}
+				tabResults[query] = filtered
+			}
+		}
+	}
+
 	return allResults, tabResults, nil
 }
 
@@ -442,7 +467,7 @@ func buildNameTabsOnly(queryParts []string, namesTab map[string][]SearchResult, 
 	return tabs, allTabResults
 }
 
-// dropFirstTabIfEmpty 当完整查询无完全匹配时，第一个 tab 显示包含查询词中任意词的部分匹配记录
+// dropFirstTabIfEmpty 当完整查询无结果时，去掉第一个 tab
 func dropFirstTabIfEmpty(queryParts []string, tabResults map[string][]SearchResult, results []SearchResult) (tabs []string, out map[string][]SearchResult) {
 	if len(queryParts) <= 1 || len(results) == 0 {
 		return queryParts, tabResults
@@ -451,46 +476,12 @@ func dropFirstTabIfEmpty(queryParts []string, tabResults map[string][]SearchResu
 	firstKey := queryParts[0]
 	firstResults, ok := tabResults[firstKey]
 
-	// 如果第一个 tab 有精确匹配，直接返回原样
-	if ok && hasExactMatch(firstResults, firstKey) {
-		return queryParts, tabResults
-	}
-
-	// 如果第一个 tab 没有结果，但分词有结果，合并分词结果到第一个 tab
-	if !ok || len(firstResults) == 0 {
-		// 合并所有分词的搜索结果到第一个 tab
-		var mergedResults []SearchResult
-		seen := make(map[string]bool)
-
-		for i := 1; i < len(queryParts); i++ {
-			word := queryParts[i]
-			if wordResults, exists := tabResults[word]; exists {
-				for _, r := range wordResults {
-					key := r.Name + "\x00" + r.Nation + "\x00" + r.Translation
-					if !seen[key] {
-						seen[key] = true
-						mergedResults = append(mergedResults, r)
-					}
-				}
-			}
-		}
-
-		// 如果合并后有结果，保留第一个 tab 并显示合并结果
-		if len(mergedResults) > 0 {
-			// 对合并结果按第一个查询词排序
-			mergedResults = sortResultsByQueryMatch(mergedResults, firstKey)
-			// 更新第一个 tab 的结果
-			tabResults[firstKey] = mergedResults
-			return queryParts, tabResults
-		}
-	}
-
-	// 如果第一个 tab 有部分匹配（非精确），保留它
+	// 如果第一个 tab 有结果，保留所有 tabs
 	if ok && len(firstResults) > 0 {
 		return queryParts, tabResults
 	}
 
-	// 没有任何结果，去掉第一个 tab
+	// 第一个 tab 无结果，去掉它
 	tabs = queryParts[1:]
 	out = make(map[string][]SearchResult)
 	for k, v := range tabResults {
