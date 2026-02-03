@@ -5,6 +5,7 @@ import (
 
 	"dict_new/config"
 	"dict_new/internal/database"
+	"dict_new/internal/util"
 )
 
 func TestRealSearch(t *testing.T) {
@@ -53,14 +54,14 @@ func TestRealSearch(t *testing.T) {
 		t.Fatalf("Failed to create search service: %v", err)
 	}
 
-	// 测试查询处理
-	result := search.processQuery("hello")
+	// 测试查询处理 (use util functions directly)
+	lang := util.DetectLanguage("hello")
+	result := util.ProcessQueryByLanguage("hello", lang)
 	if result != "hello" {
 		t.Errorf("Expected 'hello', got '%s'", result)
 	}
 
 	// 测试语言检测
-	lang := search.detectLanguage("hello")
 	if lang != "en" {
 		t.Errorf("Expected 'en', got '%s'", lang)
 	}

@@ -12,14 +12,14 @@ import (
 )
 
 type CacheData struct {
-	Query              string                 `json:"query"`
-	Type               string                 `json:"type"`
-	Language           string                 `json:"language"`
-	Timestamp          int64                  `json:"timestamp"`
-	Data               map[string]interface{} `json:"data"`
-	Tabs               []string               `json:"tabs,omitempty"`
-	TabResults         map[string][]SearchResult `json:"tab_results,omitempty"`
-	FullQueryNoRecord  string                 `json:"full_query_no_record,omitempty"`
+	Query               string                   `json:"query"`
+	Type                string                   `json:"type"`
+	Language            string                   `json:"language"`
+	Timestamp           int64                    `json:"timestamp"`
+	Data                map[string]interface{}   `json:"data"`
+	Tabs                []string                 `json:"tabs,omitempty"`
+	TabResults          map[string][]SearchResult `json:"tab_results,omitempty"`
+	FullQueryNoRecord   string                   `json:"full_query_no_record,omitempty"`
 }
 
 type CacheService struct {
@@ -109,14 +109,22 @@ func (c *CacheService) isExpired(timestamp int64) bool {
 	return time.Now().Unix()-timestamp > c.expiration
 }
 
-// 清理过期缓存（子目录 + 根目录旧文件）
-func (c *CacheService) CleanExpired() error {
+// listCacheFiles returns all cache files from both subdirectory and flat layouts
+func (c *CacheService) listCacheFiles() ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(c.cacheDir, "*", "*.json"))
 	if err != nil {
-		return fmt.Errorf("failed to list cache files: %w", err)
+		return nil, fmt.Errorf("failed to list cache files: %w", err)
 	}
 	flat, _ := filepath.Glob(filepath.Join(c.cacheDir, "*.json"))
-	files = append(files, flat...)
+	return append(files, flat...), nil
+}
+
+// 清理过期缓存（子目录 + 根目录旧文件）
+func (c *CacheService) CleanExpired() error {
+	files, err := c.listCacheFiles()
+	if err != nil {
+		return err
+	}
 
 	for _, file := range files {
 		data, err := os.ReadFile(file)
@@ -140,12 +148,10 @@ func (c *CacheService) CleanExpired() error {
 
 // 清空所有缓存（子目录 + 根目录旧文件）
 func (c *CacheService) Clear() error {
-	files, err := filepath.Glob(filepath.Join(c.cacheDir, "*", "*.json"))
+	files, err := c.listCacheFiles()
 	if err != nil {
-		return fmt.Errorf("failed to list cache files: %w", err)
+		return err
 	}
-	flat, _ := filepath.Glob(filepath.Join(c.cacheDir, "*.json"))
-	files = append(files, flat...)
 
 	for _, file := range files {
 		os.Remove(file)

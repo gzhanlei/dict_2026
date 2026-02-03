@@ -42,27 +42,3 @@ func (c *Connection) Close() error {
 	}
 	return nil
 }
-
-func (c *Connection) GetPlacesTable() string {
-	return c.Config.Tables.Places
-}
-
-func (c *Connection) GetNamesTable() string {
-	return c.Config.Tables.Names
-}
-
-func (c *Connection) GetQueryField() string {
-	return c.Config.Fields.QueryField
-}
-
-func (c *Connection) GetNameField() string {
-	return c.Config.Fields.NameField
-}
-
-func (c *Connection) GetNationField() string {
-	return c.Config.Fields.NationField
-}
-
-func (c *Connection) GetTranslationField() string {
-	return c.Config.Fields.TranslationField
-}

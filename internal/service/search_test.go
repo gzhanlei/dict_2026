@@ -5,6 +5,7 @@ import (
 
 	"dict_new/config"
 	"dict_new/internal/database"
+	"dict_new/internal/util"
 )
 
 func TestNewSearchService(t *testing.T) {
@@ -47,39 +48,9 @@ func TestNewSearchService(t *testing.T) {
 	}
 }
 
+// TestProcessQuery tests the util.ProcessQueryByLanguage function directly
+// (wrapper methods removed in refactor - now using util directly)
 func TestProcessQuery(t *testing.T) {
-	cfg := &config.Config{
-		Database: config.DatabaseConfig{
-			Host:     "localhost",
-			Port:     3306,
-			Username: "root",
-			Password: "",
-			DBName:   "mysql",
-		},
-		Cache: config.CacheConfig{
-			Directory:  "/tmp/test_search_cache",
-			Expiration: 3600,
-		},
-	}
-
-	// 创建数据库连接
-	db, err := database.NewConnection(cfg)
-	if err != nil {
-		t.Skipf("Skipping test, cannot connect to database: %v", err)
-		return
-	}
-	defer db.Close()
-
-	cache, err := NewCacheService(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create cache service: %v", err)
-	}
-
-	search, err := NewSearchService(db, cache, cfg)
-	if err != nil {
-		t.Fatalf("Failed to create search service: %v", err)
-	}
-
 	tests := []struct {
 		input    string
 		expected string
@@ -91,31 +62,15 @@ func TestProcessQuery(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		result := search.processQuery(test.input)
+		language := util.DetectLanguage(test.input)
+		result := util.ProcessQueryByLanguage(test.input, language)
 		if result != test.expected {
-			t.Errorf("processQuery(%q) = %q; expected %q", test.input, result, test.expected)
+			t.Errorf("ProcessQueryByLanguage(%q) = %q; expected %q", test.input, result, test.expected)
 		}
 	}
 }
 
 func TestDetectLanguage(t *testing.T) {
-	cfg := &config.Config{
-		Cache: config.CacheConfig{
-			Directory:  "/tmp/test_search_cache",
-			Expiration: 3600,
-		},
-	}
-
-	cache, err := NewCacheService(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create cache service: %v", err)
-	}
-
-	search := &SearchService{
-		cache: cache,
-		config: cfg,
-	}
-
 	tests := []struct {
 		input    string
 		expected string
@@ -126,9 +81,9 @@ func TestDetectLanguage(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		result := search.detectLanguage(test.input)
+		result := util.DetectLanguage(test.input)
 		if result != test.expected {
-			t.Errorf("detectLanguage(%q) = %q; expected %q", test.input, result, test.expected)
+			t.Errorf("DetectLanguage(%q) = %q; expected %q", test.input, result, test.expected)
 		}
 	}
 }
@@ -157,6 +112,7 @@ func TestSplitQuery(t *testing.T) {
 	}{
 		{"hello", []string{"hello"}},
 		{"hello world", []string{"hello world", "hello", "world"}},
+		{"Harrison Ford", []string{"Harrison Ford", "Harrison", "Ford"}},
 		{"one two three", []string{"one two three", "one", "two", "three"}},
 		{"", []string{}},
 	}
@@ -199,4 +155,28 @@ func TestMergeAndDeduplicateResults(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCacheData_HasBothTabData 确保 both 模式只有缓存含 tab 数据时才可使用
+func TestCacheData_HasBothTabData(t *testing.T) {
+	t.Run("nil cache", func(t *testing.T) {
+		if hasBothTabData(nil) {
+			t.Error("nil cache must not have both tab data")
+		}
+	})
+	t.Run("nil TabResults", func(t *testing.T) {
+		c := &CacheData{Tabs: []string{"Ford"}}
+		if hasBothTabData(c) {
+			t.Error("cache without TabResults must not be used for both")
+		}
+	})
+	t.Run("has TabResults", func(t *testing.T) {
+		c := &CacheData{
+			Tabs:        []string{"Ford", "George"},
+			TabResults:  map[string][]SearchResult{"Ford": {}, "George": {}},
+		}
+		if !hasBothTabData(c) {
+			t.Error("cache with TabResults must be usable for both")
+		}
+	})
 }

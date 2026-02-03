@@ -71,17 +71,12 @@ func TestGetTableNames(t *testing.T) {
 	}
 	defer db.Close()
 
-	conn := &Connection{DB: db.DB, Config: cfg}
-
-	// 测试获取表名
-	placesTable := conn.GetPlacesTable()
-	namesTable := conn.GetNamesTable()
-
-	if placesTable != "user" {
-		t.Errorf("Expected places table to be 'user', got '%s'", placesTable)
+	// 直接访问配置字段（getter 方法已移除以减少冗余）
+	if cfg.Tables.Places != "user" {
+		t.Errorf("Expected places table to be 'user', got '%s'", cfg.Tables.Places)
 	}
-	if namesTable != "db" {
-		t.Errorf("Expected names table to be 'db', got '%s'", namesTable)
+	if cfg.Tables.Names != "db" {
+		t.Errorf("Expected names table to be 'db', got '%s'", cfg.Tables.Names)
 	}
 }
 
@@ -95,24 +90,17 @@ func TestGetFieldNames(t *testing.T) {
 		},
 	}
 
-	conn := &Connection{Config: cfg}
-
-	// 测试获取字段名
-	queryField := conn.GetQueryField()
-	nameField := conn.GetNameField()
-	nationField := conn.GetNationField()
-	translationField := conn.GetTranslationField()
-
-	if queryField != "test_query" {
-		t.Errorf("Expected query field to be 'test_query', got '%s'", queryField)
+	// 直接访问配置字段（getter 方法已移除以减少冗余）
+	if cfg.Fields.QueryField != "test_query" {
+		t.Errorf("Expected query field to be 'test_query', got '%s'", cfg.Fields.QueryField)
 	}
-	if nameField != "test_name" {
-		t.Errorf("Expected name field to be 'test_name', got '%s'", nameField)
+	if cfg.Fields.NameField != "test_name" {
+		t.Errorf("Expected name field to be 'test_name', got '%s'", cfg.Fields.NameField)
 	}
-	if nationField != "test_nation" {
-		t.Errorf("Expected nation field to be 'test_nation', got '%s'", nationField)
+	if cfg.Fields.NationField != "test_nation" {
+		t.Errorf("Expected nation field to be 'test_nation', got '%s'", cfg.Fields.NationField)
 	}
-	if translationField != "test_translation" {
-		t.Errorf("Expected translation field to be 'test_translation', got '%s'", translationField)
+	if cfg.Fields.TranslationField != "test_translation" {
+		t.Errorf("Expected translation field to be 'test_translation', got '%s'", cfg.Fields.TranslationField)
 	}
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -22,12 +23,12 @@ type TabResult struct {
 }
 
 type SearchResponse struct {
-	Names             []SearchResult            `json:"names,omitempty"`
-	Places            []SearchResult            `json:"places,omitempty"`
-	Tabs              []string                  `json:"tabs,omitempty"`
-	TabResults        map[string][]SearchResult `json:"tab_results,omitempty"`
-	FullQueryNoRecord string                    `json:"full_query_no_record,omitempty"` // 完整查询词无记录时展示提示
-	Cache             bool                      `json:"cache"`
+	Names               []SearchResult            `json:"names,omitempty"`
+	Places              []SearchResult            `json:"places,omitempty"`
+	Tabs                []string                  `json:"tabs,omitempty"`
+	TabResults          map[string][]SearchResult `json:"tab_results,omitempty"`
+	FullQueryNoRecord   string                    `json:"full_query_no_record,omitempty"`
+	Cache               bool                      `json:"cache"`
 }
 
 type SearchService struct {
@@ -54,15 +55,16 @@ func NewSearchService(db *database.Connection, cache *CacheService, cfg *config.
 	}, nil
 }
 
-// 处理查询字符串（根据语言转换）
-func (s *SearchService) processQuery(query string) string {
-	language := s.detectLanguage(query)
-	return util.ProcessQueryByLanguage(query, language)
-}
-
-// 检测语言
-func (s *SearchService) detectLanguage(query string) string {
-	return util.DetectLanguage(query)
+// getTableName returns the actual table name from config based on search type
+func (s *SearchService) getTableName(searchType string) string {
+	switch searchType {
+	case "names":
+		return s.config.Tables.Names
+	case "places":
+		return s.config.Tables.Places
+	default:
+		return searchType
+	}
 }
 
 // 分割查询字符串
@@ -89,24 +91,27 @@ func (s *SearchService) Search(query, searchType string) (*SearchResponse, error
 
 // 带选项的搜索方法
 func (s *SearchService) SearchWithOptions(query, searchType string, noCache bool) (*SearchResponse, error) {
-	// 处理查询字符串
-	processedQuery := s.processQuery(query)
-	
-	// 检测语言
-	language := s.detectLanguage(query)
+	// 处理查询字符串 (use util functions directly instead of wrapper methods)
+	language := util.DetectLanguage(query)
+	processedQuery := util.ProcessQueryByLanguage(query, language)
 
 	// 如果不禁用缓存，尝试从缓存获取
 	if !noCache {
 		cacheKey := s.cache.GenerateKey(processedQuery, searchType, language)
 		if cached, err := s.cache.Get(cacheKey); err == nil {
-			return &SearchResponse{
-				Names:             s.convertToSearchResults(cached.Data["names"]),
-				Places:            s.convertToSearchResults(cached.Data["places"]),
-				Tabs:              cached.Tabs,
-				TabResults:        cached.TabResults,
-				FullQueryNoRecord: cached.FullQueryNoRecord,
-				Cache:             true,
-			}, nil
+			// both 模式：旧缓存可能无 tab 数据，不使用以免 Ford 等词被忽略
+			if searchType == "both" && !hasBothTabData(cached) {
+				// 当作未命中，走数据库
+			} else {
+				return &SearchResponse{
+					Names:             s.convertToSearchResults(cached.Data["names"]),
+					Places:            s.convertToSearchResults(cached.Data["places"]),
+					Tabs:              cached.Tabs,
+					TabResults:        cached.TabResults,
+					FullQueryNoRecord: cached.FullQueryNoRecord,
+					Cache:             true,
+				}, nil
+			}
 		}
 	}
 
@@ -120,7 +125,7 @@ func (s *SearchService) SearchWithOptions(query, searchType string, noCache bool
 	if !noCache {
 		// 生成缓存键
 		cacheKey := s.cache.GenerateKey(processedQuery, searchType, language)
-		
+
 		// 保存到缓存
 		cacheData := &CacheData{
 			Query:              processedQuery,
@@ -134,7 +139,7 @@ func (s *SearchService) SearchWithOptions(query, searchType string, noCache bool
 			TabResults:         response.TabResults,
 			FullQueryNoRecord:  response.FullQueryNoRecord,
 		}
-		
+
 		if err := s.cache.Set(cacheKey, cacheData); err != nil {
 			// 缓存失败不影响搜索结果，静默忽略
 		}
@@ -142,6 +147,11 @@ func (s *SearchService) SearchWithOptions(query, searchType string, noCache bool
 
 	response.Cache = false
 	return response, nil
+}
+
+// hasBothTabData 判断缓存是否包含 both 模式所需的 tab 数据（旧缓存可能无）
+func hasBothTabData(c *CacheData) bool {
+	return c != nil && c.TabResults != nil
 }
 
 // 从数据库搜索
@@ -176,19 +186,23 @@ func (s *SearchService) searchFromDatabase(query, searchType, language string) (
 			response.FullQueryNoRecord = queryParts[0]
 		}
 	case "both":
+		// 人名：分词搜索，生成分词tab
 		names, namesTabResults, err := s.searchNames(queryParts, language)
 		if err != nil {
 			return nil, err
 		}
-		places, placesTabResults, err := s.searchPlaces(queryParts, language)
+		// 地名：只搜索完整查询词，不分词，不生成tab
+		places, _, err := s.searchPlaces([]string{query}, language)
 		if err != nil {
 			return nil, err
 		}
 		response.Names = names
 		response.Places = places
-		// 合并tab结果（both模式下不使用tab功能，所以不设置）
-		_ = namesTabResults
-		_ = placesTabResults
+		// 只为人名生成tab
+		response.Tabs, response.TabResults = buildNameTabsOnly(queryParts, namesTabResults, names)
+		if len(queryParts) > 1 && !hasExactMatch(namesTabResults[queryParts[0]], queryParts[0]) {
+			response.FullQueryNoRecord = queryParts[0]
+		}
 	default:
 		return nil, fmt.Errorf("invalid search type: %s", searchType)
 	}
@@ -196,48 +210,52 @@ func (s *SearchService) searchFromDatabase(query, searchType, language string) (
 	return response, nil
 }
 
-// 搜索人名
-func (s *SearchService) searchNames(queryParts []string, language string) ([]SearchResult, map[string][]SearchResult, error) {
+// searchTable is the consolidated search function that replaces searchNames and searchPlaces
+// It searches a single table (names or places) with the given query parts and language
+func (s *SearchService) searchTable(queryParts []string, language, tableName string) ([]SearchResult, map[string][]SearchResult, error) {
 	var allResults []SearchResult
 	tabResults := make(map[string][]SearchResult)
 
-	tableName := s.db.GetNamesTable()
-	queryField := s.db.GetQueryField()
-	nameField := s.db.GetNameField()
-	nationField := s.db.GetNationField()
-	translationField := s.db.GetTranslationField()
+	queryField := s.config.Fields.QueryField
+	nameField := s.config.Fields.NameField
+	nationField := s.config.Fields.NationField
+	translationField := s.config.Fields.TranslationField
 
 	for _, query := range queryParts {
-		processedQuery := s.processQuery(query)
+		// Process query using util functions directly
+		processedQuery := util.ProcessQueryByLanguage(query, util.DetectLanguage(query))
 		processedQuery = strings.ReplaceAll(processedQuery, "-", " ")
+		// 处理 St/St. -> Saint，以匹配数据库中的格式
+		processedQuery = normalizeSaint(processedQuery)
+
 		// 构建查找独立词的SQL查询
-		var sql string
+		var sqlQuery string
 		var args []interface{}
-		
+
 		if language == "zh" {
 			// 中文查询translation字段
-			sql = fmt.Sprintf(
+			sqlQuery = fmt.Sprintf(
 				"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s",
 				nameField, nationField, translationField,
 				tableName, translationField, nameField,
 			)
 			args = []interface{}{
-				"%" + processedQuery + "%",           // 包含查询词
+				"%" + processedQuery + "%", // 包含查询词
 			}
 		} else {
 			// 其他语言查询name_for_query字段
 			// 注意：数据库中queryField前后都有空格，所以使用 LIKE '% word %'
-			sql = fmt.Sprintf(
+			sqlQuery = fmt.Sprintf(
 				"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s",
 				nameField, nationField, translationField,
 				tableName, queryField, nameField,
 			)
 			args = []interface{}{
-				"% " + processedQuery + " %",        // 前后都有空格匹配
+				"% " + processedQuery + " %", // 前后都有空格匹配
 			}
 		}
 
-		rows, err := s.db.DB.Query(sql, args...)
+		rows, err := s.db.DB.Query(sqlQuery, args...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("database query failed: %w", err)
 		}
@@ -261,10 +279,10 @@ func (s *SearchService) searchNames(queryParts []string, language string) ([]Sea
 
 		// 完全匹配查询词的结果排最前，其次以查询词开头，再为包含查询词
 		queryResults = sortResultsByQueryMatch(queryResults, query)
-		
+
 		// 保存该tab的结果
 		tabResults[query] = queryResults
-		
+
 		// 如果是第一个查询（完整查询词），也添加到总结果中
 		if query == queryParts[0] {
 			allResults = queryResults
@@ -283,93 +301,14 @@ func (s *SearchService) searchNames(queryParts []string, language string) ([]Sea
 	return allResults, tabResults, nil
 }
 
-// 搜索地名
+// 搜索人名 - now delegates to searchTable
+func (s *SearchService) searchNames(queryParts []string, language string) ([]SearchResult, map[string][]SearchResult, error) {
+	return s.searchTable(queryParts, language, s.config.Tables.Names)
+}
+
+// 搜索地名 - now delegates to searchTable
 func (s *SearchService) searchPlaces(queryParts []string, language string) ([]SearchResult, map[string][]SearchResult, error) {
-	var allResults []SearchResult
-	tabResults := make(map[string][]SearchResult)
-	
-	tableName := s.db.GetPlacesTable()
-	queryField := s.db.GetQueryField()
-	nameField := s.db.GetNameField()
-	nationField := s.db.GetNationField()
-	translationField := s.db.GetTranslationField()
-
-	// 对每个查询部分分别查询
-	for _, query := range queryParts {
-		processedQuery := s.processQuery(query)
-		// 处理连字符：替换为空格以匹配数据库中的格式
-		processedQuery = strings.ReplaceAll(processedQuery, "-", " ")
-		
-		// 构建查找独立词的SQL查询
-		var sql string
-		var args []interface{}
-		
-		if language == "zh" {
-			// 中文查询translation字段
-			sql = fmt.Sprintf(
-				"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s",
-				nameField, nationField, translationField,
-				tableName, translationField, nameField,
-			)
-			args = []interface{}{
-				"%" + processedQuery + "%",           // 包含查询词
-			}
-		} else {
-			// 其他语言查询name_for_query字段
-			// 注意：数据库中queryField前后都有空格，所以使用 LIKE '% word %'
-			sql = fmt.Sprintf(
-				"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s",
-				nameField, nationField, translationField,
-				tableName, queryField, nameField,
-			)
-			args = []interface{}{
-				"% " + processedQuery + " %",        // 前后都有空格匹配
-			}
-		}
-
-		rows, err := s.db.DB.Query(sql, args...)
-		if err != nil {
-			return nil, nil, fmt.Errorf("database query failed: %w", err)
-		}
-
-		var queryResults []SearchResult
-		for rows.Next() {
-			var name, nation, translation string
-			if err := rows.Scan(&name, &nation, &translation); err != nil {
-				rows.Close()
-				return nil, nil, fmt.Errorf("failed to scan row: %w", err)
-			}
-
-			result := SearchResult{
-				Name:        name,
-				Nation:      nation,
-				Translation: translation,
-			}
-			queryResults = append(queryResults, result)
-		}
-		rows.Close()
-
-		queryResults = sortResultsByQueryMatch(queryResults, query)
-		
-		// 保存该tab的结果
-		tabResults[query] = queryResults
-		
-		// 如果是第一个查询（完整查询词），也添加到总结果中
-		if query == queryParts[0] {
-			allResults = queryResults
-		}
-	}
-
-	// 完整短语无结果时：合并各词的结果并去重
-	if len(allResults) == 0 && len(tabResults) > 0 {
-		var slices [][]SearchResult
-		for _, r := range tabResults {
-			slices = append(slices, r)
-		}
-		allResults = mergeAndDeduplicateResults(slices...)
-	}
-
-	return allResults, tabResults, nil
+	return s.searchTable(queryParts, language, s.config.Tables.Places)
 }
 
 // 转换缓存数据为搜索结果
@@ -407,6 +346,14 @@ func getString(m map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+// normalizeSaint 将 St/St. 转换为 Saint，以匹配数据库中的 name_for_query 格式
+func normalizeSaint(query string) string {
+	// 替换 "St " 或 "St. " 开头的为 "Saint "
+	// 使用正则表达式处理单词边界
+	re := regexp.MustCompile(`(?i)\bSt\.?\s+`)
+	return re.ReplaceAllString(query, "Saint ")
 }
 
 // matchRankForSort 返回 name 相对 query 的匹配等级：0=完全匹配，1=以查询词开头，2=包含为整词，3=其他（数值越小越靠前）
@@ -456,13 +403,53 @@ func sortResultsByQueryMatch(results []SearchResult, query string) []SearchResul
 	return out
 }
 
-// dropFirstTabIfEmpty 当完整查询无匹配（第一个 tab 无结果）且主结果非空时，去掉第一个 tab
+// hasExactMatch 检查结果中是否有与查询词完全匹配的项（忽略大小写和前后空格）
+func hasExactMatch(results []SearchResult, query string) bool {
+	queryLower := strings.ToLower(strings.TrimSpace(query))
+	for _, r := range results {
+		if strings.ToLower(strings.TrimSpace(r.Name)) == queryLower {
+			return true
+		}
+	}
+	return false
+}
+
+// buildNameTabsOnly 为 both 模式只构建人名tab（地名只搜完整查询词，不生成tab）
+func buildNameTabsOnly(queryParts []string, namesTab map[string][]SearchResult, names []SearchResult) (tabs []string, allTabResults map[string][]SearchResult) {
+	allTabResults = make(map[string][]SearchResult)
+
+	// 检查完整查询是否有人名完全匹配
+	hasFullQueryExactMatch := false
+	if len(queryParts) > 1 {
+		hasFullQueryExactMatch = hasExactMatch(namesTab[queryParts[0]], queryParts[0])
+	}
+
+	// 从哪些 queryParts 开始生成 tab
+	startIdx := 0
+	if len(queryParts) > 1 && !hasFullQueryExactMatch {
+		startIdx = 1 // 跳过完整查询词
+	}
+
+	// 只生成人名 tab
+	for i := startIdx; i < len(queryParts); i++ {
+		query := queryParts[i]
+		if results, ok := namesTab[query]; ok && len(results) > 0 {
+			tabs = append(tabs, query)
+			allTabResults[query] = results
+		}
+	}
+
+	return tabs, allTabResults
+}
+
+// dropFirstTabIfEmpty 当完整查询无完全匹配（第一个 tab 无完全匹配）且主结果非空时，去掉第一个 tab
 func dropFirstTabIfEmpty(queryParts []string, tabResults map[string][]SearchResult, results []SearchResult) (tabs []string, out map[string][]SearchResult) {
 	if len(queryParts) <= 1 || len(results) == 0 {
 		return queryParts, tabResults
 	}
 	firstKey := queryParts[0]
-	if firstResults, ok := tabResults[firstKey]; ok && len(firstResults) == 0 {
+	firstResults, ok := tabResults[firstKey]
+	if !ok || !hasExactMatch(firstResults, firstKey) {
 		tabs = queryParts[1:]
 		out = make(map[string][]SearchResult)
 		for k, v := range tabResults {
