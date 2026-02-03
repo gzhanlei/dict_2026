@@ -418,25 +418,41 @@ func hasExactMatch(results []SearchResult, query string) bool {
 func buildNameTabsOnly(queryParts []string, namesTab map[string][]SearchResult, names []SearchResult) (tabs []string, allTabResults map[string][]SearchResult) {
 	allTabResults = make(map[string][]SearchResult)
 
-	// 检查完整查询是否有人名完全匹配
-	hasFullQueryExactMatch := false
+	// 检查完整查询是否有结果（不需要精确匹配，只要有结果即可）
 	if len(queryParts) > 1 {
-		hasFullQueryExactMatch = hasExactMatch(namesTab[queryParts[0]], queryParts[0])
-	}
-
-	// 从哪些 queryParts 开始生成 tab
-	startIdx := 0
-	if len(queryParts) > 1 && !hasFullQueryExactMatch {
-		startIdx = 1 // 跳过完整查询词
+		firstResults := namesTab[queryParts[0]]
+		if len(firstResults) == 0 {
+			// 第一个 tab 无结果，合并分词结果到第一个 tab
+			var mergedResults []SearchResult
+			seen := make(map[string]bool)
+			for i := 1; i < len(queryParts); i++ {
+				word := queryParts[i]
+				if wordResults, exists := namesTab[word]; exists {
+					for _, r := range wordResults {
+						key := r.Name + "\x00" + r.Nation + "\x00" + r.Translation
+						if !seen[key] {
+							seen[key] = true
+							mergedResults = append(mergedResults, r)
+						}
+					}
+				}
+			}
+			namesTab[queryParts[0]] = mergedResults
+		}
 	}
 
 	// 只生成人名 tab
-	for i := startIdx; i < len(queryParts); i++ {
+	for i := 0; i < len(queryParts); i++ {
 		query := queryParts[i]
 		if results, ok := namesTab[query]; ok && len(results) > 0 {
 			tabs = append(tabs, query)
 			allTabResults[query] = results
 		}
+	}
+
+	// 对后续 tabs 去重
+	if len(queryParts) > 1 {
+		deduplicateTabs(queryParts, allTabResults)
 	}
 
 	return tabs, allTabResults

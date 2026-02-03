@@ -18,23 +18,32 @@ class DictApp {
     initEventListeners() {
         // 搜索按钮点击事件
         this.searchBtn.addEventListener('click', () => this.performSearch());
-        
+
         // 输入框回车事件
         this.searchInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 this.performSearch();
             }
         });
-        
+
         // 输入框实时事件（可选的搜索建议）
         this.searchInput.addEventListener('input', () => {
             this.clearResults();
             this.hideError();
         });
-        
+
         // 监听浏览器前进/后退按钮
         window.addEventListener('popstate', () => {
             this.handleInitialURL();
+        });
+
+        // 复制链接点击事件（事件委托）
+        this.resultsContainer.addEventListener('click', (e) => {
+            if (e.target.classList.contains('copy-link')) {
+                e.preventDefault();
+                const textToCopy = e.target.getAttribute('data-copy-text');
+                this.copyToClipboard(textToCopy);
+            }
         });
     }
     
@@ -161,7 +170,11 @@ class DictApp {
         this.hideError();
 
         if (searchType === 'both') {
-            this.displayTwoColumnResults(data, originalQuery);
+            if (data.tabs && data.tabs.length >= 1 && data.tab_results != null) {
+                this.displayTwoColumnTabResults(data, originalQuery);
+            } else {
+                this.displayTwoColumnResults(data, originalQuery);
+            }
         } else {
             this.displaySingleColumnResults(data, originalQuery);
         }
@@ -204,6 +217,44 @@ class DictApp {
         this.showResults();
     }
 
+    // both 模式分 tab：只为人名生成tab，地名只搜索完整查询词
+    displayTwoColumnTabResults(data, originalQuery) {
+        let html = '<div class="results-single">';
+        if (data.full_query_no_record) {
+            html += `<div class="full-query-no-record">没有找到精确匹配"${this.escapeHtml(data.full_query_no_record)}"的记录。以下是相关记录。</div>`;
+        }
+        html += '<div class="tab-nav">';
+        for (let i = 0; i < data.tabs.length; i++) {
+            const isActive = i === 0 ? 'active' : '';
+            html += `<button class="tab-button ${isActive}" data-tab="${i}">${this.escapeHtml(data.tabs[i])}</button>`;
+        }
+        html += '</div>';
+
+        // 地名只搜索完整查询词，不分tab
+        const placesResults = data.places || [];
+
+        for (let i = 0; i < data.tabs.length; i++) {
+            const isActive = i === 0 ? 'active' : '';
+            const tabName = data.tabs[i];
+            const namesResults = (data.tab_results && data.tab_results[tabName]) ? data.tab_results[tabName] : [];
+            html += `<div class="tab-content ${isActive}" data-tab="${i}">`;
+            html += '<div class="results-columns">';
+            // 人名列 - 当前tab的结果
+            html += '<div class="results-column"><div class="column-header">人名</div>';
+            html += namesResults.length > 0 ? this.renderResultList(namesResults) : '<div class="no-results">未找到人名</div>';
+            html += '</div>';
+            // 地名列 - 完整查询的结果（不分tab）
+            html += '<div class="results-column"><div class="column-header">地名</div>';
+            html += placesResults.length > 0 ? this.renderResultList(placesResults) : '<div class="no-results">未找到地名</div>';
+            html += '</div>';
+            html += '</div></div>';
+        }
+        html += '</div>';
+        this.resultsContainer.innerHTML = html;
+        this.showResults();
+        this.initTabListeners();
+    }
+
     displaySingleColumnResults(data, originalQuery) {
         const results = data.names || data.places;
         const resultType = data.names ? 'names' : 'places';
@@ -230,12 +281,12 @@ class DictApp {
 
     displayTabResults(data, originalQuery, resultType) {
         console.log('displayTabResults called with:', {data, originalQuery, resultType});
-        
+
         let html = '<div class="results-single">';
-        
+
         // 完整查询词无记录时的提示（在 tab 栏上方）
         if (data.full_query_no_record) {
-            html += `<div class="full-query-no-record">${this.escapeHtml(data.full_query_no_record)}（查询词）无对应记录</div>`;
+            html += `<div class="full-query-no-record">没有找到完全符合"${this.escapeHtml(data.full_query_no_record)}"的记录</div>`;
         }
         
         // Tab导航
@@ -302,10 +353,10 @@ class DictApp {
 
     renderResultList(results) {
         let html = '';
-        results.forEach(item => {
+        results.forEach((item, index) => {
             html += '<div class="result-item">';
             html += `<div class="result-name">${this.escapeHtml(item.name)}</div>`;
-            
+
             // 构建详情文本
             let detailsText = '';
             if (item.nation && item.nation.trim() !== '') {
@@ -313,8 +364,10 @@ class DictApp {
             } else {
                 detailsText = this.escapeHtml(item.translation);
             }
-            
-            html += `<div class="result-details">${detailsText}</div>`;
+
+            html += `<div class="result-details">${detailsText}`;
+            html += ` <a href="javascript:void(0)" class="copy-link" data-copy-text="${this.escapeHtml(detailsText)}">复制</a>`;
+            html += '</div>';
             html += '</div>';
         });
         return html;
@@ -363,6 +416,30 @@ class DictApp {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    async copyToClipboard(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            // 可以在这里添加复制成功的视觉反馈
+            console.log('Copied to clipboard:', text);
+        } catch (err) {
+            console.error('Failed to copy:', err);
+            // 降级方案：使用传统的复制方法
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                console.log('Copied to clipboard (fallback):', text);
+            } catch (e) {
+                console.error('Fallback copy failed:', e);
+            }
+            document.body.removeChild(textarea);
+        }
     }
 }
 
