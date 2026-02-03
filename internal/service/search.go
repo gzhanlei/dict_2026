@@ -221,7 +221,7 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 	nationField := s.config.Fields.NationField
 	translationField := s.config.Fields.TranslationField
 
-	for _, query := range queryParts {
+	for i, query := range queryParts {
 		// Process query using util functions directly
 		processedQuery := util.ProcessQueryByLanguage(query, util.DetectLanguage(query))
 		processedQuery = strings.ReplaceAll(processedQuery, "-", " ")
@@ -244,14 +244,41 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 			}
 		} else {
 			// 其他语言查询name_for_query字段
-			// 注意：数据库中queryField前后都有空格，所以使用 LIKE '% word %'
-			sqlQuery = fmt.Sprintf(
-				"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s",
-				nameField, nationField, translationField,
-				tableName, queryField, nameField,
-			)
-			args = []interface{}{
-				"% " + processedQuery + " %", // 前后都有空格匹配
+			if i == 0 && len(queryParts) > 1 {
+				// 第一个 tab（完整查询词）：使用宽松匹配，找到包含所有词的结果
+				words := strings.Fields(processedQuery)
+				if len(words) > 1 {
+					// 多词查询：使用 LIKE '%word1%word2%' 模式
+					pattern := "%"
+					for _, word := range words {
+						pattern += word + "%"
+					}
+					sqlQuery = fmt.Sprintf(
+						"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? OR %s LIKE ? ORDER BY %s",
+						nameField, nationField, translationField,
+						tableName, queryField, nameField, nameField,
+					)
+					args = []interface{}{pattern, pattern}
+				} else {
+					// 单词查询：使用标准匹配
+					sqlQuery = fmt.Sprintf(
+						"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s",
+						nameField, nationField, translationField,
+						tableName, queryField, nameField,
+					)
+					args = []interface{}{"% " + processedQuery + " %"}
+				}
+			} else {
+				// 后续 tabs（单个词）：使用标准匹配
+				// 注意：数据库中queryField前后都有空格，所以使用 LIKE '% word %'
+				sqlQuery = fmt.Sprintf(
+					"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s",
+					nameField, nationField, translationField,
+					tableName, queryField, nameField,
+				)
+				args = []interface{}{
+					"% " + processedQuery + " %", // 前后都有空格匹配
+				}
 			}
 		}
 
