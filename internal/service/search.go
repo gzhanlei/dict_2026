@@ -442,24 +442,63 @@ func buildNameTabsOnly(queryParts []string, namesTab map[string][]SearchResult, 
 	return tabs, allTabResults
 }
 
-// dropFirstTabIfEmpty 当完整查询无完全匹配（第一个 tab 无完全匹配）且主结果非空时，去掉第一个 tab
+// dropFirstTabIfEmpty 当完整查询无完全匹配时，第一个 tab 显示包含查询词中任意词的部分匹配记录
 func dropFirstTabIfEmpty(queryParts []string, tabResults map[string][]SearchResult, results []SearchResult) (tabs []string, out map[string][]SearchResult) {
 	if len(queryParts) <= 1 || len(results) == 0 {
 		return queryParts, tabResults
 	}
+
 	firstKey := queryParts[0]
 	firstResults, ok := tabResults[firstKey]
-	if !ok || !hasExactMatch(firstResults, firstKey) {
-		tabs = queryParts[1:]
-		out = make(map[string][]SearchResult)
-		for k, v := range tabResults {
-			if k != firstKey {
-				out[k] = v
+
+	// 如果第一个 tab 有精确匹配，直接返回原样
+	if ok && hasExactMatch(firstResults, firstKey) {
+		return queryParts, tabResults
+	}
+
+	// 如果第一个 tab 没有结果，但分词有结果，合并分词结果到第一个 tab
+	if !ok || len(firstResults) == 0 {
+		// 合并所有分词的搜索结果到第一个 tab
+		var mergedResults []SearchResult
+		seen := make(map[string]bool)
+
+		for i := 1; i < len(queryParts); i++ {
+			word := queryParts[i]
+			if wordResults, exists := tabResults[word]; exists {
+				for _, r := range wordResults {
+					key := r.Name + "\x00" + r.Nation + "\x00" + r.Translation
+					if !seen[key] {
+						seen[key] = true
+						mergedResults = append(mergedResults, r)
+					}
+				}
 			}
 		}
-		return tabs, out
+
+		// 如果合并后有结果，保留第一个 tab 并显示合并结果
+		if len(mergedResults) > 0 {
+			// 对合并结果按第一个查询词排序
+			mergedResults = sortResultsByQueryMatch(mergedResults, firstKey)
+			// 更新第一个 tab 的结果
+			tabResults[firstKey] = mergedResults
+			return queryParts, tabResults
+		}
 	}
-	return queryParts, tabResults
+
+	// 如果第一个 tab 有部分匹配（非精确），保留它
+	if ok && len(firstResults) > 0 {
+		return queryParts, tabResults
+	}
+
+	// 没有任何结果，去掉第一个 tab
+	tabs = queryParts[1:]
+	out = make(map[string][]SearchResult)
+	for k, v := range tabResults {
+		if k != firstKey {
+			out[k] = v
+		}
+	}
+	return tabs, out
 }
 
 // mergeAndDeduplicateResults 合并多组搜索结果并按 (Name, Nation, Translation) 去重，保留首次出现顺序
