@@ -33,7 +33,7 @@ func main() {
 
 	log.Printf("Server starting on port %s", port)
 	log.Printf("Visit http://localhost:%s to use the application", port)
-	if err := router.Run(":" + port); err != nil {
+	if err := router.Run("127.0.0.1:" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

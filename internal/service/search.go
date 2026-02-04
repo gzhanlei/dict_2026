@@ -67,6 +67,15 @@ func (s *SearchService) getTableName(searchType string) string {
 	}
 }
 
+// 停用词列表
+var stopWords = map[string]bool{
+	"a": true, "an": true, "the": true,
+	"and": true, "or": true, "but": true,
+	"in": true, "on": true, "at": true, "to": true,
+	"for": true, "of": true, "with": true, "by": true,
+	"from": true, "as": true,
+}
+
 // 分割查询字符串
 func (s *SearchService) splitQuery(query string) []string {
 	if query == "" {
@@ -78,9 +87,14 @@ func (s *SearchService) splitQuery(query string) []string {
 		return []string{query}
 	}
 
-	// 完整查询词 + 单个单词
+	// 完整查询词 + 非停用词
 	result := []string{query}
-	result = append(result, words...)
+	for _, word := range words {
+		lowerWord := strings.ToLower(word)
+		if !stopWords[lowerWord] {
+			result = append(result, word)
+		}
+	}
 	return result
 }
 
@@ -225,6 +239,9 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 		// Process query using util functions directly
 		processedQuery := util.ProcessQueryByLanguage(query, util.DetectLanguage(query))
 		processedQuery = strings.ReplaceAll(processedQuery, "-", " ")
+		// 处理括号：将 () 替换为空格，以匹配 "James (Son of Zebedee)" 这样的记录
+		processedQuery = strings.ReplaceAll(processedQuery, "(", " ")
+		processedQuery = strings.ReplaceAll(processedQuery, ")", " ")
 		// 处理 St/St. -> Saint，以匹配数据库中的格式
 		processedQuery = normalizeSaint(processedQuery)
 
@@ -245,8 +262,9 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 		} else {
 			// 其他语言查询name_for_query字段
 			// 注意：数据库中queryField前后都有空格，所以使用 LIKE '% word %'
+			// 使用 REPLACE 处理括号，使 "Zebedee)" 能匹配 "Zebedee"
 			sqlQuery = fmt.Sprintf(
-				"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s",
+				"SELECT DISTINCT %s, %s, %s FROM %s WHERE REPLACE(REPLACE(%s, '(', ' '), ')', ' ') LIKE ? ORDER BY %s",
 				nameField, nationField, translationField,
 				tableName, queryField, nameField,
 			)
@@ -283,11 +301,12 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 		// 保存该tab的结果
 		tabResults[query] = queryResults
 
-		// 如果是第一个查询（完整查询词），也添加到总结果中
-		if query == queryParts[0] {
-			allResults = queryResults
-		}
+		// 添加到总结果（用于前端显示）
+		allResults = append(allResults, queryResults...)
 	}
+
+	// 去重
+	allResults = mergeAndDeduplicateResults(allResults)
 
 	return allResults, tabResults, nil
 }

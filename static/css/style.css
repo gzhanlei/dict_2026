@@ -61,7 +61,7 @@ main {
 }
 
 #searchInput {
-    width: 40ch; /* 25个字符的宽度 */
+    width: 30ch; /* 25个字符的宽度 */
     max-width: 100%;
     padding: 12px 15px;
     border: 2px solid #e1e8ed;
