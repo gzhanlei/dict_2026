@@ -289,15 +289,6 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 		}
 	}
 
-	// 完整短语无结果时：合并各词的结果并去重，避免多词查询（如 George Washington）无显示
-	if len(allResults) == 0 && len(tabResults) > 0 {
-		var slices [][]SearchResult
-		for _, r := range tabResults {
-			slices = append(slices, r)
-		}
-		allResults = mergeAndDeduplicateResults(slices...)
-	}
-
 	return allResults, tabResults, nil
 }
 
@@ -418,29 +409,6 @@ func hasExactMatch(results []SearchResult, query string) bool {
 func buildNameTabsOnly(queryParts []string, namesTab map[string][]SearchResult, names []SearchResult) (tabs []string, allTabResults map[string][]SearchResult) {
 	allTabResults = make(map[string][]SearchResult)
 
-	// 检查完整查询是否有结果（不需要精确匹配，只要有结果即可）
-	if len(queryParts) > 1 {
-		firstResults := namesTab[queryParts[0]]
-		if len(firstResults) == 0 {
-			// 第一个 tab 无结果，合并分词结果到第一个 tab
-			var mergedResults []SearchResult
-			seen := make(map[string]bool)
-			for i := 1; i < len(queryParts); i++ {
-				word := queryParts[i]
-				if wordResults, exists := namesTab[word]; exists {
-					for _, r := range wordResults {
-						key := r.Name + "\x00" + r.Nation + "\x00" + r.Translation
-						if !seen[key] {
-							seen[key] = true
-							mergedResults = append(mergedResults, r)
-						}
-					}
-				}
-			}
-			namesTab[queryParts[0]] = mergedResults
-		}
-	}
-
 	// 只生成人名 tab
 	for i := 0; i < len(queryParts); i++ {
 		query := queryParts[i]
@@ -450,45 +418,9 @@ func buildNameTabsOnly(queryParts []string, namesTab map[string][]SearchResult, 
 		}
 	}
 
-	// 对后续 tabs 去重
-	if len(queryParts) > 1 {
-		deduplicateTabs(queryParts, allTabResults)
-	}
-
 	return tabs, allTabResults
 }
 
-// deduplicateTabs 对后续 tabs 去重：排除已在第一个 tab 中的记录
-func deduplicateTabs(queryParts []string, tabResults map[string][]SearchResult) {
-	if len(queryParts) <= 1 {
-		return
-	}
-
-	firstKey := queryParts[0]
-	firstResults := tabResults[firstKey]
-
-	// 建立第一个 tab 的 key 集合
-	firstKeys := make(map[string]bool)
-	for _, r := range firstResults {
-		key := r.Name + "\x00" + r.Nation + "\x00" + r.Translation
-		firstKeys[key] = true
-	}
-
-	// 从后续 tabs 中排除已在第一个 tab 中的记录
-	for i := 1; i < len(queryParts); i++ {
-		query := queryParts[i]
-		if results, ok := tabResults[query]; ok {
-			var filtered []SearchResult
-			for _, r := range results {
-				key := r.Name + "\x00" + r.Nation + "\x00" + r.Translation
-				if !firstKeys[key] {
-					filtered = append(filtered, r)
-				}
-			}
-			tabResults[query] = filtered
-		}
-	}
-}
 
 // dropFirstTabIfEmpty 当完整查询无结果时，第一个 tab 显示包含任意分词的结果
 func dropFirstTabIfEmpty(queryParts []string, tabResults map[string][]SearchResult, results []SearchResult) (tabs []string, out map[string][]SearchResult) {
@@ -501,38 +433,10 @@ func dropFirstTabIfEmpty(queryParts []string, tabResults map[string][]SearchResu
 
 	// 如果第一个 tab 有结果，保留所有 tabs
 	if ok && len(firstResults) > 0 {
-		// 对后续 tabs 去重
-		deduplicateTabs(queryParts, tabResults)
 		return queryParts, tabResults
 	}
 
-	// 第一个 tab 无结果，合并分词结果到第一个 tab
-	var mergedResults []SearchResult
-	seen := make(map[string]bool)
-
-	for i := 1; i < len(queryParts); i++ {
-		word := queryParts[i]
-		if wordResults, exists := tabResults[word]; exists {
-			for _, r := range wordResults {
-				key := r.Name + "\x00" + r.Nation + "\x00" + r.Translation
-				if !seen[key] {
-					seen[key] = true
-					mergedResults = append(mergedResults, r)
-				}
-			}
-		}
-	}
-
-	// 更新第一个 tab 的结果
-	tabResults[firstKey] = mergedResults
-
-	// 对后续 tabs 去重
-	if len(mergedResults) > 0 {
-		deduplicateTabs(queryParts, tabResults)
-		return queryParts, tabResults
-	}
-
-	// 合并后仍无结果，去掉第一个 tab
+	// 第一个 tab 无结果，去掉第一个 tab
 	tabs = queryParts[1:]
 	out = make(map[string][]SearchResult)
 	for k, v := range tabResults {

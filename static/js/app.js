@@ -7,6 +7,7 @@ class DictApp {
         this.errorSection = document.getElementById('errorSection');
         this.resultsContainer = document.getElementById('resultsContainer');
         this.errorMessage = document.getElementById('errorMessage');
+        this.feedbackSection = document.getElementById('feedbackSection');
         
         this.initEventListeners();
         this.currentTab = null;
@@ -387,10 +388,16 @@ class DictApp {
 
     showResults() {
         this.resultsSection.style.display = 'block';
+        if (this.feedbackSection) {
+            this.feedbackSection.style.display = 'block';
+        }
     }
 
     hideResults() {
         this.resultsSection.style.display = 'none';
+        if (this.feedbackSection) {
+            this.feedbackSection.style.display = 'none';
+        }
     }
 
     clearResults() {
@@ -401,6 +408,9 @@ class DictApp {
     showError(message) {
         this.errorMessage.textContent = message;
         this.errorSection.style.display = 'block';
+        if (this.feedbackSection) {
+            this.feedbackSection.style.display = 'none';
+        }
     }
 
     hideError() {
@@ -410,6 +420,9 @@ class DictApp {
     showNoResults(query) {
         this.resultsContainer.innerHTML = `<div class="no-results">未找到与"${query || ''}"相关的结果</div>`;
         this.showResults();
+        if (this.feedbackSection) {
+            this.feedbackSection.style.display = 'none';
+        }
     }
 
     escapeHtml(text) {

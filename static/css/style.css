@@ -308,6 +308,25 @@ main {
     text-align: center;
 }
 
+/* 反馈区域 */
+.feedback-section {
+    text-align: center;
+    padding: 20px 0;
+    margin-bottom: 10px;
+}
+
+.feedback-section img {
+    display: block;
+    margin: 0 auto;
+    width: 150px;
+}
+
+.feedback-section p {
+    margin-top: 10px;
+    color: #7f8c8d;
+    font-size: 0.9rem;
+}
+
 /* 页脚 */
 footer {
     text-align: center;
