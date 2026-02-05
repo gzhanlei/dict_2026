@@ -31,7 +31,7 @@ type CacheService struct {
 func NewCacheService(cfg *config.Config) (*CacheService, error) {
 	// 确保缓存目录存在
 	cacheDir := cfg.Cache.Directory
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
@@ -94,10 +94,10 @@ func (c *CacheService) Set(key string, data *CacheData) error {
 	}
 
 	filePath := c.keyPath(key)
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(filePath), 0750); err != nil {
 		return fmt.Errorf("failed to create cache subdir: %w", err)
 	}
-	if err := os.WriteFile(filePath, jsonData, 0644); err != nil {
+	if err := os.WriteFile(filePath, jsonData, 0640); err != nil {
 		return fmt.Errorf("failed to write cache file: %w", err)
 	}
 

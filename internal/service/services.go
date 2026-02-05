@@ -11,6 +11,7 @@ type Services struct {
 	DB     *database.Connection
 	Cache  *CacheService
 	Search *SearchService
+	Config *config.Config
 }
 
 func NewServices() (*Services, error) {
@@ -42,6 +43,7 @@ func NewServices() (*Services, error) {
 		DB:     db,
 		Cache:  cache,
 		Search: search,
+		Config: cfg,
 	}, nil
 }
 

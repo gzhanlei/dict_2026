@@ -67,6 +67,34 @@ func (s *SearchService) getTableName(searchType string) string {
 	}
 }
 
+// validateTableName 验证表名是否合法（防止SQL注入）
+func validateTableName(name string) bool {
+	if name == "" {
+		return false
+	}
+	// 只允许字母、数字、下划线
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// validateFieldName 验证字段名是否合法（防止SQL注入）
+func validateFieldName(name string) bool {
+	if name == "" {
+		return false
+	}
+	// 只允许字母、数字、下划线
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
 // 停用词列表
 var stopWords = map[string]bool{
 	"a": true, "an": true, "the": true,
@@ -75,6 +103,9 @@ var stopWords = map[string]bool{
 	"for": true, "of": true, "with": true, "by": true,
 	"from": true, "as": true,
 }
+
+// saintRegex 用于匹配 St/St. 开头的单词（预编译以提高性能）
+var saintRegex = regexp.MustCompile(`(?i)\bSt\.?\s+`)
 
 // 分割查询字符串
 func (s *SearchService) splitQuery(query string) []string {
@@ -235,6 +266,15 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 	nationField := s.config.Fields.NationField
 	translationField := s.config.Fields.TranslationField
 
+	// 验证表名和字段名（防止SQL注入）
+	if !validateTableName(tableName) {
+		return nil, nil, fmt.Errorf("invalid table name: %s", tableName)
+	}
+	if !validateFieldName(queryField) || !validateFieldName(nameField) ||
+		!validateFieldName(nationField) || !validateFieldName(translationField) {
+		return nil, nil, fmt.Errorf("invalid field name")
+	}
+
 	for _, query := range queryParts {
 		// Process query using util functions directly
 		processedQuery := util.ProcessQueryByLanguage(query, util.DetectLanguage(query))
@@ -360,10 +400,8 @@ func getString(m map[string]interface{}, key string) string {
 
 // normalizeSaint 将 St/St. 转换为 Saint，以匹配数据库中的 name_for_query 格式
 func normalizeSaint(query string) string {
-	// 替换 "St " 或 "St. " 开头的为 "Saint "
-	// 使用正则表达式处理单词边界
-	re := regexp.MustCompile(`(?i)\bSt\.?\s+`)
-	return re.ReplaceAllString(query, "Saint ")
+	// 使用预编译的正则表达式处理单词边界
+	return saintRegex.ReplaceAllString(query, "Saint ")
 }
 
 // matchRankForSort 返回 name 相对 query 的匹配等级：0=完全匹配，1=以查询词开头，2=包含为整词，3=其他（数值越小越靠前）

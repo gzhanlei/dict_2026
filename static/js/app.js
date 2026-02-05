@@ -294,7 +294,7 @@ class DictApp {
         html += '<div class="tab-nav">';
         for (let i = 0; i < data.tabs.length; i++) {
             const isActive = i === 0 ? 'active' : '';
-            html += `<button class="tab-button ${isActive}" data-tab="${i}">${data.tabs[i]}</button>`;
+            html += `<button class="tab-button ${isActive}" data-tab="${i}">${this.escapeHtml(data.tabs[i])}</button>`;
         }
         html += '</div>';
 
@@ -418,7 +418,8 @@ class DictApp {
     }
 
     showNoResults(query) {
-        this.resultsContainer.innerHTML = `<div class="no-results">未找到与"${query || ''}"相关的结果</div>`;
+        const safeQuery = this.escapeHtml(query || '');
+        this.resultsContainer.innerHTML = `<div class="no-results">未找到与"${safeQuery}"相关的结果</div>`;
         this.showResults();
         if (this.feedbackSection) {
             this.feedbackSection.style.display = 'none';

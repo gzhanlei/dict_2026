@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"dict_new/internal/handler"
+	"dict_new/internal/middleware"
 	"dict_new/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,15 @@ func main() {
 
 	// 设置路由
 	router := gin.Default()
+
+	// 添加安全响应头中间件
+	router.Use(middleware.SecurityHeaders())
+
+	// 添加速率限制中间件（如果配置了）
+	if services.Config.Security.RateLimit > 0 {
+		router.Use(middleware.RateLimit(services.Config.Security.RateLimit))
+	}
+
 	handler.SetupRoutes(router, services)
 
 	// 启动服务器

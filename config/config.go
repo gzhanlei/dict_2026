@@ -8,12 +8,18 @@ import (
 )
 
 type Config struct {
-	Database DatabaseConfig `yaml:"database"`
-	Tables   TablesConfig   `yaml:"tables"`
-	Fields   FieldsConfig   `yaml:"fields"`
-	Server   ServerConfig   `yaml:"server"`
-	Cache    CacheConfig    `yaml:"cache"`
-	Log      LogConfig      `yaml:"log"`
+	Database      DatabaseConfig      `yaml:"database"`
+	Tables        TablesConfig        `yaml:"tables"`
+	Fields        FieldsConfig        `yaml:"fields"`
+	Server        ServerConfig        `yaml:"server"`
+	Cache         CacheConfig         `yaml:"cache"`
+	Log           LogConfig           `yaml:"log"`
+	Security      SecurityConfig      `yaml:"security"`
+}
+
+type SecurityConfig struct {
+	TrustedProxies []string `yaml:"trusted_proxies"` // 可信代理IP列表，为空时信任所有
+	RateLimit      int      `yaml:"rate_limit"`      // 每分钟请求限制，0表示不限制
 }
 
 type DatabaseConfig struct {
