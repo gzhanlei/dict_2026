@@ -89,3 +89,45 @@ This is a multilingual dictionary web service (Go/Gin) that searches person name
 - E2E tests: `e2e_test.go` with build tag `//go:build e2e`
 - Simple tests: `*_simple_test.go` - no external dependencies
 - Real integration tests: `*_real_test.go` - require database setup
+
+## Development Workflow (IMPORTANT)
+
+### Test-Driven Development (TDD) - MANDATORY
+
+**All code changes MUST follow TDD workflow:**
+
+1. **Write test FIRST** (RED phase)
+   - Before implementing any feature or fix, write a failing test
+   - Test should clearly describe the expected behavior
+   - Run test to confirm it FAILS
+
+2. **Implement minimal code** (GREEN phase)
+   - Write the simplest code to make the test pass
+   - Do not over-engineer
+   - Run test to confirm it PASSES
+
+3. **Refactor if needed** (REFACTOR phase)
+   - Clean up code while keeping tests green
+   - Ensure no duplication
+   - Run all tests to confirm no regression
+
+4. **Verify coverage**
+   - Run `go test ./...` to ensure all tests pass
+   - Aim for high test coverage of business logic
+
+**Example workflow for adding validation:**
+```bash
+# 1. Write test - this should FAIL
+go test ./internal/handler -run TestQueryValidation -v
+
+# 2. Implement code to pass test
+go test ./internal/handler -run TestQueryValidation -v
+
+# 3. Run all tests to ensure no regression
+go test ./...
+
+# 4. Build and verify
+go build -o dict_new .
+```
+
+**NEVER write production code before writing the corresponding test.**

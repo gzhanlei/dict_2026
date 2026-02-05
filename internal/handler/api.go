@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"dict_new/internal/service"
 	"github.com/gin-gonic/gin"
@@ -108,6 +109,15 @@ func SearchHandler(services *service.Services) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, SearchResponse{
 				Success: false,
 				Error:   "Invalid search type. Must be 'names', 'places', or 'both'",
+			})
+			return
+		}
+
+		// 验证查询词（至少2个非空格字符）
+		if utf8.RuneCountInString(strings.TrimSpace(req.Query)) < 2 {
+			c.JSON(http.StatusBadRequest, SearchResponse{
+				Success: false,
+				Error:   "Query must be at least 2 characters",
 			})
 			return
 		}

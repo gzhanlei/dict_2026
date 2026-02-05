@@ -16,6 +16,20 @@ class DictApp {
         this.handleInitialURL();
     }
 
+    // 验证输入是否有效（至少2个非空格字符）
+    isValidInput(text) {
+        if (!text) return false;
+        // 去除前后空格后，至少要有2个字符
+        const trimmed = text.trim();
+        return trimmed.length >= 2;
+    }
+
+    // 更新查询按钮状态
+    updateSearchButtonState() {
+        const query = this.searchInput.value;
+        this.searchBtn.disabled = !this.isValidInput(query);
+    }
+
     initEventListeners() {
         // 搜索按钮点击事件
         this.searchBtn.addEventListener('click', () => this.performSearch());
@@ -27,11 +41,15 @@ class DictApp {
             }
         });
 
-        // 输入框实时事件（可选的搜索建议）
+        // 输入框实时事件（验证输入并更新按钮状态）
         this.searchInput.addEventListener('input', () => {
             this.clearResults();
             this.hideError();
+            this.updateSearchButtonState();
         });
+
+        // 初始化按钮状态
+        this.updateSearchButtonState();
 
         // 监听浏览器前进/后退按钮
         window.addEventListener('popstate', () => {
@@ -109,8 +127,8 @@ class DictApp {
 
     async performSearch(skipURLUpdate = false) {
         const query = this.searchInput.value.trim();
-        if (!query) {
-            this.showError('请输入查询词');
+        if (!this.isValidInput(query)) {
+            this.showError('请输入至少2个字符的查询词');
             return;
         }
 
