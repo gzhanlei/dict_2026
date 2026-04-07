@@ -76,21 +76,23 @@ var katakanaToHiragana = map[string]string{
 
 // 将片假名转换为平假名
 func katakanaToHiraganaFunc(text string) string {
-	result := ""
+	var result strings.Builder
+	result.Grow(len(text))
 	for _, r := range text {
 		if h, ok := katakanaToHiragana[string(r)]; ok {
-			result += h
+			result.WriteString(h)
 		} else {
-			result += string(r)
+			result.WriteRune(r)
 		}
 	}
-	return result
+	return result.String()
 }
 
 // 处理促音（小っ）
 func processSokuon(text string) string {
 	runes := []rune(text)
-	result := ""
+	var result strings.Builder
+	result.Grow(len(text) * 2) // 预留空间，因为促音可能增加字符
 	for i, r := range runes {
 		if r == 'っ' {
 			// 如果促音后面跟着一个辅音，双写该辅音
@@ -101,25 +103,25 @@ func processSokuon(text string) string {
 					nextRomaji = h
 					// 取第一个字符（辅音部分）
 					if len(nextRomaji) > 0 {
-						result += string(nextRomaji[0])
+						result.WriteByte(nextRomaji[0])
 					}
 				} else {
 					// 检查是否是拗音的开始
 					if i+2 < len(runes) {
-						youonStr := string(runes[i+1:i+3])
+						youonStr := string(runes[i+1 : i+3])
 						if y, ok := youonMap[youonStr]; ok {
 							if len(y) > 0 {
-								result += string(y[0])
+								result.WriteByte(y[0])
 							}
 						}
 					}
 				}
 			}
 		} else {
-			result += string(r)
+			result.WriteRune(r)
 		}
 	}
-	return result
+	return result.String()
 }
 
 // 处理长音
@@ -147,21 +149,38 @@ func ToRomaji(text string) string {
 	// 先将片假名转为平假名
 	text = katakanaToHiraganaFunc(text)
 
-	// 处理拗音
-	for youon, romaji := range youonMap {
-		text = strings.ReplaceAll(text, youon, romaji)
-	}
-
 	// 处理促音
 	text = processSokuon(text)
 
-	// 处理基本假名
-	for hiragana, romaji := range hiraganaToRomaji {
-		text = strings.ReplaceAll(text, hiragana, romaji)
+	// 单次遍历转换基本假名和拗音
+	var result strings.Builder
+	result.Grow(len(text) * 2) // 罗马字通常比假名长
+
+	i := 0
+	runes := []rune(text)
+	for i < len(runes) {
+		// 尝试匹配拗音（3个字符）
+		if i+2 < len(runes) {
+			youonStr := string(runes[i : i+3])
+			if romaji, ok := youonMap[youonStr]; ok {
+				result.WriteString(romaji)
+				i += 3
+				continue
+			}
+		}
+
+		// 尝试匹配基本假名
+		if h, ok := hiraganaToRomaji[string(runes[i])]; ok {
+			result.WriteString(h)
+			i++
+			continue
+		}
+
+		// 其他字符直接添加
+		result.WriteRune(runes[i])
+		i++
 	}
 
-	// 处理长音
-	text = processChouon(text)
-
-	return text
+	// 处理长音（已优化，只处理已知的常见模式）
+	return processChouon(result.String())
 }

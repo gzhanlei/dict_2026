@@ -1,11 +1,13 @@
 package service
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"dict_new/config"
@@ -45,8 +47,10 @@ func NewCacheService(cfg *config.Config) (*CacheService, error) {
 // 生成缓存键（文件名，如 8efa226d....json）
 func (c *CacheService) GenerateKey(query, searchType, language string) string {
 	keyStr := fmt.Sprintf("%s_%s_%s", query, searchType, language)
-	hash := md5.Sum([]byte(keyStr))
-	return fmt.Sprintf("%x.json", hash)
+	hash := sha256.Sum256([]byte(keyStr))
+	// 只取前16位作为文件名，足够避免冲突
+	hashStr := hex.EncodeToString(hash[:8])
+	return hashStr + ".json"
 }
 
 // keyPath 按键前两字符分子目录，避免单目录文件过多导致限制或性能问题
@@ -126,21 +130,48 @@ func (c *CacheService) CleanExpired() error {
 		return err
 	}
 
+	// 使用协程并行处理文件检查，提高性能
+	const workerCount = 8
+	sem := make(chan struct{}, workerCount)
+	var wg sync.WaitGroup
+	mu := &sync.Mutex{}
+	var filesToDelete []string
+
 	for _, file := range files {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			continue // 跳过读取失败的文件
-		}
+		wg.Add(1)
+		go func(filePath string) {
+			defer wg.Done()
+			sem <- struct{}{}        // 获取信号量
+			defer func() { <-sem }() // 释放信号量
 
-		var cacheData CacheData
-		if err := json.Unmarshal(data, &cacheData); err != nil {
-			os.Remove(file) // 删除损坏的文件
-			continue
-		}
+			data, err := os.ReadFile(filePath)
+			if err != nil {
+				return // 跳过读取失败的文件
+			}
 
-		if c.isExpired(cacheData.Timestamp) {
-			os.Remove(file) // 删除过期的文件
-		}
+			var cacheData CacheData
+			if err := json.Unmarshal(data, &cacheData); err != nil {
+				// 删除损坏的文件
+				mu.Lock()
+				filesToDelete = append(filesToDelete, filePath)
+				mu.Unlock()
+				return
+			}
+
+			if c.isExpired(cacheData.Timestamp) {
+				// 标记为待删除
+				mu.Lock()
+				filesToDelete = append(filesToDelete, filePath)
+				mu.Unlock()
+			}
+		}(file)
+	}
+
+	wg.Wait()
+
+	// 批量删除文件
+	for _, file := range filesToDelete {
+		os.Remove(file)
 	}
 
 	return nil

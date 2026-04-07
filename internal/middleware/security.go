@@ -17,11 +17,13 @@ func SecurityHeaders() gin.HandlerFunc {
 		c.Header("X-Content-Type-Options", "nosniff")
 		// XSS保护
 		c.Header("X-XSS-Protection", "1; mode=block")
-		// 强制HTTPS (仅在生产环境启用)
-		// c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		// 强制HTTPS (生产环境应启用，开发环境可注释)
+		if c.Request.TLS != nil {
+			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		// 内容安全策略
 		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
-		//  referrer 策略
+		// referrer 策略
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 
 		c.Next()
@@ -34,16 +36,21 @@ type RateLimiter struct {
 	mu       sync.RWMutex
 	limit    int
 	window   time.Duration
+	stopChan chan struct{}
 }
 
 // NewRateLimiter 创建新的速率限制器
 // limit: 在window时间内允许的最大请求数
 func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
-	return &RateLimiter{
+	rl := &RateLimiter{
 		requests: make(map[string][]time.Time),
 		limit:    limit,
 		window:   window,
+		stopChan: make(chan struct{}),
 	}
+	// 启动后台清理协程
+	go rl.cleanupRoutine()
+	return rl
 }
 
 // Allow 检查是否允许请求
@@ -76,6 +83,49 @@ func (rl *RateLimiter) Allow(clientIP string) bool {
 	rl.requests[clientIP] = validTimes
 
 	return true
+}
+
+// cleanupRoutine 定期清理过期的请求记录，防止内存泄漏
+func (rl *RateLimiter) cleanupRoutine() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			rl.cleanup()
+		case <-rl.stopChan:
+			return
+		}
+	}
+}
+
+// cleanup 清理过期的请求记录
+func (rl *RateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+
+	for ip, times := range rl.requests {
+		var validTimes []time.Time
+		for _, t := range times {
+			if t.After(cutoff) {
+				validTimes = append(validTimes, t)
+			}
+		}
+		if len(validTimes) == 0 {
+			delete(rl.requests, ip) // 删除无有效记录的IP
+		} else {
+			rl.requests[ip] = validTimes
+		}
+	}
+}
+
+// Stop 停止速率限制器
+func (rl *RateLimiter) Stop() {
+	close(rl.stopChan)
 }
 
 // RateLimit 速率限制中间件

@@ -292,7 +292,7 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 		if language == "zh" {
 			// 中文查询translation字段
 			sqlQuery = fmt.Sprintf(
-				"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s",
+				"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s LIMIT 100",
 				nameField, nationField, translationField,
 				tableName, translationField, nameField,
 			)
@@ -304,7 +304,7 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 			// 注意：数据库中queryField前后都有空格，所以使用 LIKE '% word %'
 			// 使用 REPLACE 处理括号，使 "Zebedee)" 能匹配 "Zebedee"
 			sqlQuery = fmt.Sprintf(
-				"SELECT DISTINCT %s, %s, %s FROM %s WHERE REPLACE(REPLACE(%s, '(', ' '), ')', ' ') LIKE ? ORDER BY %s",
+				"SELECT DISTINCT %s, %s, %s FROM %s WHERE REPLACE(REPLACE(%s, '(', ' '), ')', ' ') LIKE ? ORDER BY %s LIMIT 100",
 				nameField, nationField, translationField,
 				tableName, queryField, nameField,
 			)
@@ -433,22 +433,21 @@ func matchRankForSort(name, query string) int {
 	return 3
 }
 
-// sortResultsByQueryMatch 按“查询词匹配程度”排序：完全匹配最前，其次以查询词开头，再为包含查询词，同等级按 name 排序
+// sortResultsByQueryMatch 按”查询词匹配程度”排序：完全匹配最前，其次以查询词开头，再为包含查询词，同等级按 name 排序
+// 原地排序，避免不必要的数组复制
 func sortResultsByQueryMatch(results []SearchResult, query string) []SearchResult {
 	if len(results) <= 1 {
 		return results
 	}
-	out := make([]SearchResult, len(results))
-	copy(out, results)
-	sort.Slice(out, func(i, j int) bool {
-		ri := matchRankForSort(out[i].Name, query)
-		rj := matchRankForSort(out[j].Name, query)
+	sort.Slice(results, func(i, j int) bool {
+		ri := matchRankForSort(results[i].Name, query)
+		rj := matchRankForSort(results[j].Name, query)
 		if ri != rj {
 			return ri < rj
 		}
-		return strings.Compare(out[i].Name, out[j].Name) < 0
+		return strings.Compare(results[i].Name, results[j].Name) < 0
 	})
-	return out
+	return results
 }
 
 // hasExactMatch 检查结果中是否有与查询词完全匹配的项（忽略大小写和前后空格）

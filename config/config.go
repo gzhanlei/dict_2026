@@ -84,9 +84,14 @@ func LoadConfig(configPath string) (*Config, error) {
 }
 
 func (c *Config) GetDSN() string {
+	// 优先从环境变量读取密码，避免明文密码暴露在配置文件中
+	password := os.Getenv("DB_PASSWORD")
+	if password == "" {
+		password = c.Database.Password // 兜底：使用配置文件中的密码
+	}
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		c.Database.Username,
-		c.Database.Password,
+		password,
 		c.Database.Host,
 		c.Database.Port,
 		c.Database.DBName)
