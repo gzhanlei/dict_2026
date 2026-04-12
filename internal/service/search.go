@@ -107,23 +107,53 @@ var stopWords = map[string]bool{
 // saintRegex 用于匹配 St/St. 开头的单词（预编译以提高性能）
 var saintRegex = regexp.MustCompile(`(?i)\bSt\.?\s+`)
 
+// normalizeApostrophes 将排版用弯引号替换为直引号，避免查询 L'Aigle 时因引号类型不同而匹配不到数据
+func normalizeApostrophes(query string) string {
+	query = strings.ReplaceAll(query, "\u2019", "'") // 右单引号
+	query = strings.ReplaceAll(query, "\u2018", "'") // 左单引号
+	return query
+}
+
 // 分割查询字符串
 func (s *SearchService) splitQuery(query string) []string {
 	if query == "" {
 		return []string{}
 	}
 
-	words := strings.Fields(query) // 按空格分割
+	// 将连字符替换为空格，使 "Château-Gontier-sur-Mayenne" 能像按空格拆分一样被拆分
+	normalized := strings.ReplaceAll(query, "-", " ")
+	words := strings.Fields(normalized) // 按空格分割
 	if len(words) == 1 {
 		return []string{query}
 	}
 
 	// 完整查询词 + 非停用词
 	result := []string{query}
+
+	// 对于连字符查询，生成前缀子串组合（如 Château-Gontier-sur-Mayenne 生成 Château-Gontier-sur、Château-Gontier 等）
+	if strings.Contains(query, "-") {
+		for i := len(words) - 1; i >= 1; i-- {
+			sub := strings.Join(words[:i], "-")
+			if sub != query {
+				result = append(result, sub)
+			}
+		}
+	}
+
 	for _, word := range words {
 		lowerWord := strings.ToLower(word)
 		if !stopWords[lowerWord] {
-			result = append(result, word)
+			// 避免重复添加
+			exists := false
+			for _, r := range result {
+				if r == word {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				result = append(result, word)
+			}
 		}
 	}
 	return result
@@ -236,8 +266,8 @@ func (s *SearchService) searchFromDatabase(query, searchType, language string) (
 		if err != nil {
 			return nil, err
 		}
-		// 地名：只搜索完整查询词，不分词，不生成tab
-		places, _, err := s.searchPlaces([]string{query}, language)
+		// 地名：也使用 queryParts 分词搜索，以支持连字符地名匹配，但不在前端生成 tab
+		places, _, err := s.searchPlaces(queryParts, language)
 		if err != nil {
 			return nil, err
 		}
@@ -278,6 +308,7 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 	for _, query := range queryParts {
 		// Process query using util functions directly
 		processedQuery := util.ProcessQueryByLanguage(query, util.DetectLanguage(query))
+		processedQuery = normalizeApostrophes(processedQuery)
 		processedQuery = strings.ReplaceAll(processedQuery, "-", " ")
 		// 处理括号：将 () 替换为空格，以匹配 "James (Son of Zebedee)" 这样的记录
 		processedQuery = strings.ReplaceAll(processedQuery, "(", " ")

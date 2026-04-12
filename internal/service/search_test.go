@@ -131,6 +131,67 @@ func TestSplitQuery(t *testing.T) {
 	}
 }
 
+func TestSplitQuery_WithHyphens(t *testing.T) {
+	cfg := &config.Config{
+		Cache: config.CacheConfig{
+			Directory:  "/tmp/test_search_cache",
+			Expiration: 3600,
+		},
+	}
+
+	cache, err := NewCacheService(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create cache service: %v", err)
+	}
+
+	search := &SearchService{
+		cache:  cache,
+		config: cfg,
+	}
+
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{"Château-Gontier-sur-Mayenne", []string{"Château-Gontier-sur-Mayenne", "Château-Gontier-sur", "Château-Gontier", "Château", "Gontier", "sur", "Mayenne"}},
+		{"well-known", []string{"well-known", "well", "known"}},
+		{"Saint-Malo", []string{"Saint-Malo", "Saint", "Malo"}},
+	}
+
+	for _, test := range tests {
+		result := search.splitQuery(test.input)
+		if len(result) != len(test.expected) {
+			t.Errorf("splitQuery(%q) length mismatch: got %d, expected %d", test.input, len(result), len(test.expected))
+		} else {
+			for i, v := range result {
+				if v != test.expected[i] {
+					t.Errorf("splitQuery(%q)[%d] = %q; expected %q", test.input, i, v, test.expected[i])
+				}
+			}
+		}
+	}
+}
+
+func TestNormalizeApostrophes(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"L'Aigle", "L'Aigle"},               // straight apostrophe unchanged
+		{"L\u2019Aigle", "L'Aigle"},         // right single quotation mark (U+2019)
+		{"L\u2018Aigle", "L'Aigle"},         // left single quotation mark (U+2018)
+		{"O\u2019Connor", "O'Connor"},       // Irish name with curly quote
+		{"d\u2019Artagnan", "d'Artagnan"},   // French name with curly quote
+	}
+
+	for _, test := range tests {
+		result := normalizeApostrophes(test.input)
+		if result != test.expected {
+			t.Errorf("normalizeApostrophes(%q) = %q; expected %q", test.input, result, test.expected)
+		}
+	}
+}
+
 func TestMergeAndDeduplicateResults(t *testing.T) {
 	a := SearchResult{Name: "A", Nation: "US", Translation: "a"}
 	a2 := SearchResult{Name: "A", Nation: "US", Translation: "a"}

@@ -376,16 +376,19 @@ class DictApp {
             html += '<div class="result-item">';
             html += `<div class="result-name">${this.escapeHtml(item.name)}</div>`;
 
-            // 构建详情文本
+            // 构建详情文本和复制文本（复制时不带【国家/地区】前缀）
             let detailsText = '';
+            let copyText = '';
             if (item.nation && item.nation.trim() !== '') {
                 detailsText = `【${this.escapeHtml(item.nation)}】${this.escapeHtml(item.translation)}`;
+                copyText = this.escapeHtml(item.translation);
             } else {
                 detailsText = this.escapeHtml(item.translation);
+                copyText = detailsText;
             }
 
             html += `<div class="result-details">${detailsText}`;
-            html += ` <a href="javascript:void(0)" class="copy-link" data-copy-text="${this.escapeHtml(detailsText)}">复制</a>`;
+            html += ` <a href="javascript:void(0)" class="copy-link" data-copy-text="${copyText}">复制</a>`;
             html += '</div>';
             html += '</div>';
         });

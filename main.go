@@ -25,6 +25,11 @@ func main() {
 	// 设置路由
 	router := gin.Default()
 
+	// 设置可信代理列表（空列表表示不信任任何代理）
+	if err := router.SetTrustedProxies(services.Config.Security.TrustedProxies); err != nil {
+		log.Fatalf("Failed to set trusted proxies: %v", err)
+	}
+
 	// 添加安全响应头中间件
 	router.Use(middleware.SecurityHeaders())
 
@@ -43,6 +48,7 @@ func main() {
 
 	log.Printf("Server starting on port %s", port)
 	log.Printf("Visit http://localhost:%s to use the application", port)
+	// 绑定 127.0.0.1，确保外部无法直接访问（应通过 Nginx/Apache 反向代理）
 	if err := router.Run("127.0.0.1:" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
