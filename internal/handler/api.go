@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +28,11 @@ type SearchResponse struct {
 
 // SaveQueryLog 保存查询记录到数据库
 func SaveQueryLog(services *service.Services, query, queryType, ip string) {
+	// 异步执行时不受 Gin Recovery 保护，防止 panic 导致进程崩溃
+	defer func() {
+		_ = recover()
+	}()
+
 	// 将内部类型转换为数据库存储格式
 	var dbQueryType string
 	switch queryType {
@@ -38,8 +44,12 @@ func SaveQueryLog(services *service.Services, query, queryType, ip string) {
 		dbQueryType = "both" // 未知类型默认为both
 	}
 
+	// 数据库写入加超时，避免连接被长时间占用导致连接池耗尽
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	sql := "INSERT INTO queries (query_word, query_time, ip, queryType) VALUES (?, ?, ?, ?)"
-	_, err := services.DB.DB.Exec(sql, query, time.Now(), ip, dbQueryType)
+	_, err := services.DB.DB.ExecContext(ctx, sql, query, time.Now(), ip, dbQueryType)
 	if err != nil {
 		// 记录失败不影响主流程，仅记录错误
 		// 实际项目中可以使用日志库
@@ -122,11 +132,20 @@ func SearchHandler(services *service.Services) gin.HandlerFunc {
 			return
 		}
 
+		// 限制查询词最大长度，防止超长输入导致分词爆炸和资源耗尽
+		if utf8.RuneCountInString(req.Query) > 100 {
+			c.JSON(http.StatusBadRequest, SearchResponse{
+				Success: false,
+				Error:   "Query is too long. Maximum 100 characters",
+			})
+			return
+		}
+
 		// 保存查询记录（异步，不阻塞主流程）
 		go SaveQueryLog(services, req.Query, req.Type, GetClientIP(c, services.Config.Security.TrustedProxies))
 
 		// 执行搜索，传递noCache参数
-		result, err := services.Search.SearchWithOptions(req.Query, req.Type, req.NoCache)
+		result, err := services.Search.SearchWithOptions(c.Request.Context(), req.Query, req.Type, req.NoCache)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, SearchResponse{
 				Success: false,

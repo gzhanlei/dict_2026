@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"time"
 
 	"dict_new/config"
 
@@ -29,6 +30,8 @@ func NewConnection(cfg *config.Config) (*Connection, error) {
 	// 设置连接池参数
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(1 * time.Minute)
 
 	return &Connection{
 		DB:     db,

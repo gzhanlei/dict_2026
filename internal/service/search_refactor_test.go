@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"dict_new/config"
@@ -90,7 +91,7 @@ func TestSearchTable_Consolidated(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			results, tabResults, err := search.searchTable(tt.queryParts, tt.language, tt.tableName)
+			results, tabResults, err := search.searchTable(context.Background(), tt.queryParts, tt.language, tt.tableName)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("searchTable() error = nil, wantErr %v", tt.wantErr)

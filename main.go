@@ -2,7 +2,9 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
+	"time"
 
 	"dict_new/internal/handler"
 	"dict_new/internal/middleware"
@@ -49,7 +51,15 @@ func main() {
 	log.Printf("Server starting on port %s", port)
 	log.Printf("Visit http://localhost:%s to use the application", port)
 	// 绑定 127.0.0.1，确保外部无法直接访问（应通过 Nginx/Apache 反向代理）
-	if err := router.Run("127.0.0.1:" + port); err != nil {
+	// 显式设置超时，防止慢速/挂起连接耗尽资源
+	server := &http.Server{
+		Addr:         "127.0.0.1:" + port,
+		Handler:      router,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

@@ -33,6 +33,9 @@ func NewServices() (*Services, error) {
 		return nil, fmt.Errorf("failed to create cache service: %w", err)
 	}
 
+	// 启动后台过期缓存清理
+	cache.StartCleanup()
+
 	// 创建搜索服务
 	search, err := NewSearchService(db, cache, cfg)
 	if err != nil {

@@ -1,15 +1,23 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"dict_new/config"
 	"dict_new/internal/database"
 	"dict_new/internal/util"
 )
+
+// maxQueryParts 限制分词后子查询的最大数量，防止恶意输入导致全表扫描爆炸
+const maxQueryParts = 8
+
+// queryTimeout 单个子查询的数据库超时时间
+const queryTimeout = 10 * time.Second
 
 type SearchResult struct {
 	Name        string `json:"name"`
@@ -156,16 +164,21 @@ func (s *SearchService) splitQuery(query string) []string {
 			}
 		}
 	}
+
+	// 限制子查询总数：优先保留完整查询词和较长的前缀/单词（它们排在前面）
+	if len(result) > maxQueryParts {
+		result = result[:maxQueryParts]
+	}
 	return result
 }
 
 // 主搜索方法
-func (s *SearchService) Search(query, searchType string) (*SearchResponse, error) {
-	return s.SearchWithOptions(query, searchType, false)
+func (s *SearchService) Search(ctx context.Context, query, searchType string) (*SearchResponse, error) {
+	return s.SearchWithOptions(ctx, query, searchType, false)
 }
 
 // 带选项的搜索方法
-func (s *SearchService) SearchWithOptions(query, searchType string, noCache bool) (*SearchResponse, error) {
+func (s *SearchService) SearchWithOptions(ctx context.Context, query, searchType string, noCache bool) (*SearchResponse, error) {
 	// 处理查询字符串 (use util functions directly instead of wrapper methods)
 	language := util.DetectLanguage(query)
 	processedQuery := util.ProcessQueryByLanguage(query, language)
@@ -191,7 +204,7 @@ func (s *SearchService) SearchWithOptions(query, searchType string, noCache bool
 	}
 
 	// 从数据库查询
-	response, err := s.searchFromDatabase(processedQuery, searchType, language)
+	response, err := s.searchFromDatabase(ctx, processedQuery, searchType, language)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +243,7 @@ func hasBothTabData(c *CacheData) bool {
 }
 
 // 从数据库搜索
-func (s *SearchService) searchFromDatabase(query, searchType, language string) (*SearchResponse, error) {
+func (s *SearchService) searchFromDatabase(ctx context.Context, query, searchType, language string) (*SearchResponse, error) {
 	response := &SearchResponse{}
 
 	// 分割查询
@@ -239,7 +252,7 @@ func (s *SearchService) searchFromDatabase(query, searchType, language string) (
 
 	switch searchType {
 	case "names":
-		results, tabResults, err := s.searchNames(queryParts, language)
+		results, tabResults, err := s.searchNames(ctx, queryParts, language)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +263,7 @@ func (s *SearchService) searchFromDatabase(query, searchType, language string) (
 			response.FullQueryNoRecord = queryParts[0]
 		}
 	case "places":
-		results, tabResults, err := s.searchPlaces(queryParts, language)
+		results, tabResults, err := s.searchPlaces(ctx, queryParts, language)
 		if err != nil {
 			return nil, err
 		}
@@ -262,12 +275,12 @@ func (s *SearchService) searchFromDatabase(query, searchType, language string) (
 		}
 	case "both":
 		// 人名：分词搜索，生成分词tab
-		names, namesTabResults, err := s.searchNames(queryParts, language)
+		names, namesTabResults, err := s.searchNames(ctx, queryParts, language)
 		if err != nil {
 			return nil, err
 		}
 		// 地名：也使用 queryParts 分词搜索，以支持连字符地名匹配，但不在前端生成 tab
-		places, _, err := s.searchPlaces(queryParts, language)
+		places, _, err := s.searchPlaces(ctx, queryParts, language)
 		if err != nil {
 			return nil, err
 		}
@@ -287,7 +300,7 @@ func (s *SearchService) searchFromDatabase(query, searchType, language string) (
 
 // searchTable is the consolidated search function that replaces searchNames and searchPlaces
 // It searches a single table (names or places) with the given query parts and language
-func (s *SearchService) searchTable(queryParts []string, language, tableName string) ([]SearchResult, map[string][]SearchResult, error) {
+func (s *SearchService) searchTable(ctx context.Context, queryParts []string, language, tableName string) ([]SearchResult, map[string][]SearchResult, error) {
 	var allResults []SearchResult
 	tabResults := make(map[string][]SearchResult)
 
@@ -344,8 +357,11 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 			}
 		}
 
-		rows, err := s.db.DB.Query(sqlQuery, args...)
+		// 每个子查询使用带超时的context，避免慢查询长期占用数据库连接
+		qCtx, cancel := context.WithTimeout(ctx, queryTimeout)
+		rows, err := s.db.DB.QueryContext(qCtx, sqlQuery, args...)
 		if err != nil {
+			cancel()
 			return nil, nil, fmt.Errorf("database query failed: %w", err)
 		}
 
@@ -354,6 +370,7 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 			var name, nation, translation string
 			if err := rows.Scan(&name, &nation, &translation); err != nil {
 				rows.Close()
+				cancel()
 				return nil, nil, fmt.Errorf("failed to scan row: %w", err)
 			}
 
@@ -365,6 +382,7 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 			queryResults = append(queryResults, result)
 		}
 		rows.Close()
+		cancel()
 
 		// 完全匹配查询词的结果排最前，其次以查询词开头，再为包含查询词
 		queryResults = sortResultsByQueryMatch(queryResults, query)
@@ -383,13 +401,13 @@ func (s *SearchService) searchTable(queryParts []string, language, tableName str
 }
 
 // 搜索人名 - now delegates to searchTable
-func (s *SearchService) searchNames(queryParts []string, language string) ([]SearchResult, map[string][]SearchResult, error) {
-	return s.searchTable(queryParts, language, s.config.Tables.Names)
+func (s *SearchService) searchNames(ctx context.Context, queryParts []string, language string) ([]SearchResult, map[string][]SearchResult, error) {
+	return s.searchTable(ctx, queryParts, language, s.config.Tables.Names)
 }
 
 // 搜索地名 - now delegates to searchTable
-func (s *SearchService) searchPlaces(queryParts []string, language string) ([]SearchResult, map[string][]SearchResult, error) {
-	return s.searchTable(queryParts, language, s.config.Tables.Places)
+func (s *SearchService) searchPlaces(ctx context.Context, queryParts []string, language string) ([]SearchResult, map[string][]SearchResult, error) {
+	return s.searchTable(ctx, queryParts, language, s.config.Tables.Places)
 }
 
 // 转换缓存数据为搜索结果

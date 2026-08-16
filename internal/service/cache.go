@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"dict_new/config"
@@ -123,55 +122,40 @@ func (c *CacheService) listCacheFiles() ([]string, error) {
 	return append(files, flat...), nil
 }
 
+// StartCleanup 启动后台协程，每小时清理一次过期缓存，防止缓存文件无限堆积
+func (c *CacheService) StartCleanup() {
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			_ = c.CleanExpired()
+		}
+	}()
+}
+
 // 清理过期缓存（子目录 + 根目录旧文件）
+// 顺序处理文件：清理任务无需并发，避免为每个文件创建协程导致资源耗尽
 func (c *CacheService) CleanExpired() error {
 	files, err := c.listCacheFiles()
 	if err != nil {
 		return err
 	}
 
-	// 使用协程并行处理文件检查，提高性能
-	const workerCount = 8
-	sem := make(chan struct{}, workerCount)
-	var wg sync.WaitGroup
-	mu := &sync.Mutex{}
-	var filesToDelete []string
-
 	for _, file := range files {
-		wg.Add(1)
-		go func(filePath string) {
-			defer wg.Done()
-			sem <- struct{}{}        // 获取信号量
-			defer func() { <-sem }() // 释放信号量
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue // 跳过读取失败的文件
+		}
 
-			data, err := os.ReadFile(filePath)
-			if err != nil {
-				return // 跳过读取失败的文件
-			}
+		var cacheData CacheData
+		if err := json.Unmarshal(data, &cacheData); err != nil {
+			os.Remove(file) // 删除损坏的文件
+			continue
+		}
 
-			var cacheData CacheData
-			if err := json.Unmarshal(data, &cacheData); err != nil {
-				// 删除损坏的文件
-				mu.Lock()
-				filesToDelete = append(filesToDelete, filePath)
-				mu.Unlock()
-				return
-			}
-
-			if c.isExpired(cacheData.Timestamp) {
-				// 标记为待删除
-				mu.Lock()
-				filesToDelete = append(filesToDelete, filePath)
-				mu.Unlock()
-			}
-		}(file)
-	}
-
-	wg.Wait()
-
-	// 批量删除文件
-	for _, file := range filesToDelete {
-		os.Remove(file)
+		if c.isExpired(cacheData.Timestamp) {
+			os.Remove(file)
+		}
 	}
 
 	return nil
