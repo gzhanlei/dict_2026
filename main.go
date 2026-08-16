@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -45,7 +46,7 @@ func main() {
 	// 启动服务器
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = fmt.Sprintf("%d", services.Config.Server.Port)
 	}
 
 	log.Printf("Server starting on port %s", port)
