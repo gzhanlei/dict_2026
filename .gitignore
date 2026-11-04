@@ -39,3 +39,6 @@ logs/
 
 # Build distribution directory
 dist/
+
+# Built binaries
+dict_new_centos7
