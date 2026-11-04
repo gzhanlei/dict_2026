@@ -36,3 +36,6 @@ cache/
 
 # Log directory
 logs/
+
+# Build distribution directory
+dist/
