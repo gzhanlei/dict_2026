@@ -67,7 +67,7 @@ Configuration is managed via YAML files in `config/`:
 Key configuration sections:
 - **database**: MySQL connection settings (host, port, username, password, dbname)
 - **tables**: Table names for places and names (with date suffixes like `_260202`)
-- **fields**: Column names used in queries (`name_for_query_*`, `name`, `nation`, `translation`)
+- **fields**: Column names used in queries (`name_for_query_*`, pre-cleaned `query_field_clean`, `name`, `nation`, `translation`)
 - **cache**: File-based cache directory and expiration time
 - **log**: Log file directory
 
@@ -128,6 +128,9 @@ The `name_for_query_*` field in the database stores values with **leading and tr
 - English/romaji queries must use `LIKE '% query %'` pattern (spaces on both sides)
 - Do not use `LIKE '%query%'` for the query field or results will be incorrect
 - Hyphens in queries are replaced with spaces before matching (e.g., "New-York" → "New York")
+- Parens in stored values: non-Chinese queries prefer the pre-cleaned column configured as `fields.query_field_clean` (default `name_for_query_clean`, a STORED generated column created by `scripts/add_name_for_query_clean.sql`), so the WHERE clause is a plain `LIKE` on the column. Wrapping the column in `REPLACE()` defeats all indexes and re-evaluates the function per row (a past cause of slow full-table scans)
+- If the clean column is missing (MySQL error 1054, e.g. DDL not run yet or a rebuilt table without it), the service logs a warning and falls back to the legacy `REPLACE(REPLACE(query_field, '(', ' '), ')', ' ')` query for the rest of the process lifetime. Results are identical, only slower
+- When rebuilding the date-suffixed tables, include the `name_for_query_clean` generated column and its index in the CREATE TABLE (see the SQL script)
 
 ### Test Patterns
 - Unit tests use `t.Skip()` when database is unavailable

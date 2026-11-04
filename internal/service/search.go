@@ -2,15 +2,20 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"dict_new/config"
 	"dict_new/internal/database"
 	"dict_new/internal/util"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 // maxQueryParts 限制分词后子查询的最大数量，防止恶意输入导致全表扫描爆炸
@@ -43,6 +48,10 @@ type SearchService struct {
 	db     *database.Connection
 	cache  *CacheService
 	config *config.Config
+
+	// cleanFieldUnavailable 标记预清洗查询列不可用（如云端DDL未执行、新表未包含该列），
+	// 置位后本进程内一直走 REPLACE 回退路径，避免每次查询都失败重试
+	cleanFieldUnavailable atomic.Bool
 }
 
 func NewSearchService(db *database.Connection, cache *CacheService, cfg *config.Config) (*SearchService, error) {
@@ -101,6 +110,28 @@ func validateFieldName(name string) bool {
 		}
 	}
 	return true
+}
+
+// isUnknownColumnError 判断是否为 MySQL 1054（列不存在）错误
+func isUnknownColumnError(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1054
+}
+
+// buildSearchQuerySQL 构建统一结构的搜索查询，WHERE 为 "<whereExpr> LIKE ?"
+func buildSearchQuerySQL(tableName, whereExpr, nameField, nationField, translationField string) string {
+	return fmt.Sprintf(
+		"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s LIMIT 100",
+		nameField, nationField, translationField,
+		tableName, whereExpr, nameField,
+	)
+}
+
+// parenCleanedExpr 返回查询时清洗括号的列表达式，使 "Zebedee)" 能匹配 "(Zebedee)"。
+// 注意：对列套 REPLACE 会导致索引失效且每行重复计算（慢查询根因），
+// 仅在数据库没有预清洗列 name_for_query_clean 时使用；预清洗列由 scripts/add_name_for_query_clean.sql 创建
+func parenCleanedExpr(queryField string) string {
+	return fmt.Sprintf("REPLACE(REPLACE(%s, '(', ' '), ')', ' ')", queryField)
 }
 
 // 停用词列表
@@ -318,6 +349,13 @@ func (s *SearchService) searchTable(ctx context.Context, queryParts []string, la
 		return nil, nil, fmt.Errorf("invalid field name")
 	}
 
+	// 预清洗查询列（括号在导入时已替换为空格，见 scripts/add_name_for_query_clean.sql）：
+	// 未配置或名称非法时视为未启用，走 REPLACE 兼容路径
+	queryFieldClean := s.config.Fields.QueryFieldClean
+	if queryFieldClean != "" && !validateFieldName(queryFieldClean) {
+		queryFieldClean = ""
+	}
+
 	for _, query := range queryParts {
 		// Process query using util functions directly
 		processedQuery := util.ProcessQueryByLanguage(query, util.DetectLanguage(query))
@@ -329,37 +367,39 @@ func (s *SearchService) searchTable(ctx context.Context, queryParts []string, la
 		// 处理 St/St. -> Saint，以匹配数据库中的格式
 		processedQuery = normalizeSaint(processedQuery)
 
-		// 构建查找独立词的SQL查询
-		var sqlQuery string
-		var args []interface{}
-
+		// 构建查找独立词的SQL查询：按语言/可用列决定 WHERE 表达式与匹配模式
+		// useCleanField 仅在非中文且预清洗列可用时为 true（回退逻辑依赖此语义）
+		var whereExpr, pattern string
+		useCleanField := false
 		if language == "zh" {
-			// 中文查询translation字段
-			sqlQuery = fmt.Sprintf(
-				"SELECT DISTINCT %s, %s, %s FROM %s WHERE %s LIKE ? ORDER BY %s LIMIT 100",
-				nameField, nationField, translationField,
-				tableName, translationField, nameField,
-			)
-			args = []interface{}{
-				"%" + processedQuery + "%", // 包含查询词
-			}
+			// 中文查询translation字段，包含匹配
+			whereExpr = translationField
+			pattern = "%" + processedQuery + "%"
+		} else if queryFieldClean != "" && !s.cleanFieldUnavailable.Load() {
+			// 预清洗列：普通列LIKE，不对列套REPLACE（避免索引失效、每行重复计算）
+			// 注意：数据库中该列值前后都有空格，用 '% q %' 匹配独立词
+			useCleanField = true
+			whereExpr = queryFieldClean
+			pattern = "% " + processedQuery + " %"
 		} else {
-			// 其他语言查询name_for_query字段
-			// 注意：数据库中queryField前后都有空格，所以使用 LIKE '% word %'
-			// 使用 REPLACE 处理括号，使 "Zebedee)" 能匹配 "Zebedee"
-			sqlQuery = fmt.Sprintf(
-				"SELECT DISTINCT %s, %s, %s FROM %s WHERE REPLACE(REPLACE(%s, '(', ' '), ')', ' ') LIKE ? ORDER BY %s LIMIT 100",
-				nameField, nationField, translationField,
-				tableName, queryField, nameField,
-			)
-			args = []interface{}{
-				"% " + processedQuery + " %", // 前后都有空格匹配
-			}
+			// 回退：查询时用 REPLACE 清洗括号，使 "Zebedee)" 能匹配 "(Zebedee)"
+			whereExpr = parenCleanedExpr(queryField)
+			pattern = "% " + processedQuery + " %"
 		}
+		sqlQuery := buildSearchQuerySQL(tableName, whereExpr, nameField, nationField, translationField)
+		args := []interface{}{pattern}
 
 		// 每个子查询使用带超时的context，避免慢查询长期占用数据库连接
 		qCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 		rows, err := s.db.DB.QueryContext(qCtx, sqlQuery, args...)
+		// 预清洗列缺失（DDL未执行或新表未包含该列）时回退到REPLACE查询，保证可用性；
+		// 结果集与预清洗列完全一致，只是查询较慢
+		if err != nil && useCleanField && isUnknownColumnError(err) {
+			log.Printf("查询列 %s 不存在，回退到REPLACE查询方式: %v", queryFieldClean, err)
+			s.cleanFieldUnavailable.Store(true)
+			sqlQuery = buildSearchQuerySQL(tableName, parenCleanedExpr(queryField), nameField, nationField, translationField)
+			rows, err = s.db.DB.QueryContext(qCtx, sqlQuery, args...)
+		}
 		if err != nil {
 			cancel()
 			return nil, nil, fmt.Errorf("database query failed: %w", err)

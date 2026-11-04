@@ -11,6 +11,9 @@ tables:
 
 fields:
   query_field: "name_for_query_251202"
+  # 预清洗查询列（括号已在导入时替换为空格），需先执行 scripts/add_name_for_query_clean.sql
+  # 列不存在时自动回退到 query_field + REPLACE 方式，本地未加列也可正常查询
+  query_field_clean: "name_for_query_clean"
   name_field: "name"
   nation_field: "nation"
   translation_field: "translation"

@@ -36,9 +36,10 @@ type TablesConfig struct {
 }
 
 type FieldsConfig struct {
-	QueryField      string `yaml:"query_field"`
-	NameField       string `yaml:"name_field"`
-	NationField     string `yaml:"nation_field"`
+	QueryField       string `yaml:"query_field"`
+	QueryFieldClean  string `yaml:"query_field_clean"` // 预清洗查询列（括号已替换为空格），为空时回退到对query_field套REPLACE的查询
+	NameField        string `yaml:"name_field"`
+	NationField      string `yaml:"nation_field"`
 	TranslationField string `yaml:"translation_field"`
 }
 

@@ -21,6 +21,7 @@ tables:
 
 fields:
   query_field: "name_for_query_251202"
+  query_field_clean: "name_for_query_clean"
   name_field: "name"
   nation_field: "nation"
   translation_field: "translation"
@@ -75,6 +76,9 @@ log:
 	// 验证字段配置
 	if config.Fields.QueryField != "name_for_query_251202" {
 		t.Errorf("Expected query field to be 'name_for_query_251202', got '%s'", config.Fields.QueryField)
+	}
+	if config.Fields.QueryFieldClean != "name_for_query_clean" {
+		t.Errorf("Expected query field clean to be 'name_for_query_clean', got '%s'", config.Fields.QueryFieldClean)
 	}
 	if config.Fields.NameField != "name" {
 		t.Errorf("Expected name field to be 'name', got '%s'", config.Fields.NameField)
