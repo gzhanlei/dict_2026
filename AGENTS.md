@@ -61,7 +61,8 @@ TEST_BASE_URL=http://localhost:9000 go test -tags=e2e -v ./e2e_test.go
 ## Configuration
 
 Configuration is managed via YAML files in `config/`:
-- `config/app.yaml` - Production configuration
+- `config/app.yaml` - Runtime configuration (gitignored, never commit real credentials; template: `config/app.example.yaml`)
+- `config/app.example.yaml` - Sanitized configuration template
 - `config/dev.yaml` - Development configuration (if exists)
 
 Key configuration sections:

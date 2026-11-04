@@ -1,0 +1,41 @@
+# 配置模板：复制为 config/app.yaml 并填入真实值
+#   cp config/app.example.yaml config/app.yaml
+# app.yaml 已被 .gitignore 忽略，切勿提交真实密码
+
+database:
+  host: "localhost"
+  port: 3306
+  username: "root"
+  password: "CHANGE_ME" # 生产环境建议改用环境变量 DB_PASSWORD
+  dbname: "dict"
+
+tables:
+  # 表名带日期后缀，随数据更新变化
+  places: "places_260202"
+  names: "names_260202"
+
+fields:
+  query_field: "name_for_query_251202"
+  # 预清洗查询列（括号已在导入时替换为空格），需先执行 scripts/add_name_for_query_clean.sql
+  # 列不存在时自动回退到 query_field + REPLACE 方式
+  query_field_clean: "name_for_query_clean"
+  name_field: "name"
+  nation_field: "nation"
+  translation_field: "translation"
+
+server:
+  port: 8080
+
+cache:
+  directory: "./cache"
+  expiration: 3600
+
+log:
+  directory: "./logs"
+
+security:
+  # 可信代理IP列表，为空时不信任任何代理头（最安全）
+  # 示例：["127.0.0.1", "10.0.0.0/8"] 或 ["0.0.0.0/0"] 信任所有
+  trusted_proxies: [127.0.0.1]
+  # API速率限制（每分钟请求数），0表示不限制
+  rate_limit: 60
