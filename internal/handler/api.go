@@ -15,10 +15,11 @@ import (
 
 // SearchRequest 搜索请求结构
 type SearchRequest struct {
-	Query    string `json:"query" binding:"required"`
-	Type     string `json:"type" binding:"required"`     // names, places, both
-	Language string `json:"language,omitempty"`          // zh, ja, en (可选，自动检测)
-	NoCache  bool   `json:"noCache,omitempty"`           // 是否禁用缓存
+	Query           string `json:"query" binding:"required"`
+	Type            string `json:"type" binding:"required"`     // names, places, both
+	Language        string `json:"language,omitempty"`          // zh, ja, en (可选，自动检测)
+	NoCache         bool   `json:"noCache,omitempty"`           // 是否禁用缓存
+	TurnstileToken  string `json:"cf-turnstile-response"`       // Cloudflare Turnstile token（启用人机校验时必填）
 }
 
 // SearchResponse 搜索响应结构
@@ -145,6 +146,20 @@ func SearchHandler(services *service.Services) gin.HandlerFunc {
 
 		// 保存查询记录（异步，不阻塞主流程）
 		clientIP := GetClientIP(c, services.Config.Security.TrustedProxies)
+
+		// Turnstile 人机校验网关：启用时在查库与查询日志之前先校验，
+		// 爬虫/无token请求在此被拦截，不消耗数据库资源
+		if services.Turnstile != nil && services.Turnstile.Enforced() {
+			if err := services.Turnstile.Verify(c.Request.Context(), req.TurnstileToken, clientIP); err != nil {
+				log.Printf("turnstile ip=%s type=%s q=%q reject=%v", clientIP, req.Type, req.Query, err)
+				c.JSON(http.StatusForbidden, SearchResponse{
+					Success: false,
+					Error:   "人机验证失败，请刷新页面后重试",
+				})
+				return
+			}
+		}
+
 		go SaveQueryLog(services, req.Query, req.Type, clientIP)
 
 		// 执行搜索，传递noCache参数；记录耗时与来源，便于排查爬虫/慢查询
@@ -258,6 +273,24 @@ func URLSearchHandler(services *service.Services) gin.HandlerFunc {
 	}
 }
 
+// PublicConfigResponse /api/config 响应（仅公开值，不含任何 secret）
+type PublicConfigResponse struct {
+	Success   bool                          `json:"success"`
+	Turnstile *service.PublicConfig         `json:"turnstile"`
+}
+
+// ConfigHandler 前端启动时获取公开运行配置（Turnstile site key 等）
+func ConfigHandler(services *service.Services) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		resp := PublicConfigResponse{Success: true}
+		if services.Turnstile != nil {
+			cfg := services.Turnstile.GetPublicConfig()
+			resp.Turnstile = &cfg
+		}
+		c.JSON(http.StatusOK, resp)
+	}
+}
+
 // SetupRoutes 设置路由
 func SetupRoutes(router *gin.Engine, services *service.Services) *gin.Engine {
 	// API路由组
@@ -265,6 +298,7 @@ func SetupRoutes(router *gin.Engine, services *service.Services) *gin.Engine {
 	{
 		api.POST("/search", SearchHandler(services))
 		api.GET("/health", HealthHandler(services))
+		api.GET("/config", ConfigHandler(services))
 	}
 
 	// 静态文件服务

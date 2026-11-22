@@ -159,3 +159,22 @@ Cache hits bypass the gates entirely. Cumulative counters (requests, cache hits,
 busy rejects, DB errors, SQL sub-queries, active searches) are exposed on `/api/health`
 under `metrics`, and every search logs one structured line (`search ip=... dur=...ms cache=...`)
 for diagnosing crawler traffic.
+
+### Cloudflare Turnstile
+`/api/search` can be gated by Cloudflare Turnstile (human verification), configured in
+`config/app.yaml` under `turnstile`:
+- Enforcement is active only when `enabled: true` **and** a secret is present
+  (`turnstile.secret_key` or env `TURNSTILE_SECRET`, which wins). `enabled` without a secret
+  logs a warning at startup and fails open, so a config mistake can't take the site down.
+- The frontend fetches `GET /api/config` (public values only: enabled/site_key/action) and, when
+  enabled, loads the Turnstile script, renders an invisible widget (`static/js/app.js`), and sends
+  the token as `cf-turnstile-response` in the search POST body. Tokens are single-use: the widget
+  resets after every search (`afterSearchTurnstile`) and `ensureTurnstileToken` re-arms on expiry.
+- Server-side verification (`internal/service/turnstile.go`) POSTs to the siteverify endpoint with
+  a 10s timeout, then checks `success`, `action` (must equal `turnstile.action`), and `hostname`
+  (must be in `turnstile.hostnames` allowlist; empty list skips the check). Any failure is 403,
+  and rejection happens before query logging or any database work.
+- The CSP in `internal/middleware/security.go` must keep `https://challenges.cloudflare.com`
+  allowed under script-src/frame-src/connect-src, or the widget silently fails to load.
+- Local testing uses Cloudflare's test keys (invisible always-pass sitekey `1x00000000000000000000BB`,
+  always-pass secret `1x0000000000000000000000000000000AA`, always-fail secret `2x0000000000000000000000000000000AA`).

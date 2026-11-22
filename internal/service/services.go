@@ -2,16 +2,18 @@ package service
 
 import (
 	"fmt"
+	"log"
 
 	"dict_new/config"
 	"dict_new/internal/database"
 )
 
 type Services struct {
-	DB     *database.Connection
-	Cache  *CacheService
-	Search *SearchService
-	Config *config.Config
+	DB        *database.Connection
+	Cache     *CacheService
+	Search    *SearchService
+	Turnstile *TurnstileService
+	Config    *config.Config
 }
 
 func NewServices() (*Services, error) {
@@ -42,11 +44,20 @@ func NewServices() (*Services, error) {
 		return nil, fmt.Errorf("failed to create search service: %w", err)
 	}
 
+	// 创建 Turnstile 校验服务
+	turnstile := NewTurnstileService(cfg, "")
+
+	if cfg.Turnstile.Enabled && cfg.TurnstileSecret() == "" {
+		// 配置不完整：校验会跳过（fail-open），提前打日志避免误以为已受保护
+		log.Printf("警告: turnstile.enabled=true 但未配置 secret（检查 config/app.yaml 的 turnstile.secret_key 或环境变量 TURNSTILE_SECRET），人机校验未生效")
+	}
+
 	return &Services{
-		DB:     db,
-		Cache:  cache,
-		Search: search,
-		Config: cfg,
+		DB:        db,
+		Cache:     cache,
+		Search:    search,
+		Turnstile: turnstile,
+		Config:    cfg,
 	}, nil
 }
 

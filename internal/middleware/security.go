@@ -22,7 +22,13 @@ func SecurityHeaders() gin.HandlerFunc {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		// 内容安全策略
-		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+		// challenges.cloudflare.com：Turnstile widget 的脚本/iframe/回调请求来源
+		c.Header("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"frame-src https://challenges.cloudflare.com; "+
+				"connect-src 'self' https://challenges.cloudflare.com")
 		// referrer 策略
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 

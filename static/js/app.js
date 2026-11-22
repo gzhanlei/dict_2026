@@ -8,12 +8,82 @@ class DictApp {
         this.resultsContainer = document.getElementById('resultsContainer');
         this.errorMessage = document.getElementById('errorMessage');
         this.feedbackSection = document.getElementById('feedbackSection');
-        
+
+        // Cloudflare Turnstile 状态（启用时由 /api/config 驱动）
+        this.turnstileReady = false;      // 脚本已加载且 widget 已渲染
+        this.turnstileToken = null;       // 当前可用 token（单次使用）
+        this.turnstileWidgetId = null;
+        this.turnstileSiteKey = null;
+        this.turnstileAction = 'search';
+
         this.initEventListeners();
         this.currentTab = null;
-        
-        // 页面加载时检查URL并执行搜索
+
+        // 加载公开配置（Turnstile 等），随后检查URL并执行搜索
+        this.loadTurnstileConfig();
         this.handleInitialURL();
+    }
+
+    // ========== Cloudflare Turnstile ==========
+    // 获取公开配置；启用时动态加载 Turnstile 脚本并渲染 invisible widget
+    async loadTurnstileConfig() {
+        try {
+            const response = await fetch('/api/config');
+            if (!response.ok) return;
+            const data = await response.json();
+            const ts = data.turnstile;
+            if (ts && ts.enabled && ts.site_key) {
+                this.turnstileSiteKey = ts.site_key;
+                this.turnstileAction = ts.action || 'search';
+                this.setupTurnstile();
+            }
+        } catch (e) {
+            // 配置接口不可用：按未启用处理
+        }
+    }
+
+    setupTurnstile() {
+        // CSP 需放行 https://challenges.cloudflare.com（script/frame/connect）
+        const script = document.createElement('script');
+        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+        script.async = true;
+        script.defer = true;
+        script.onload = () => this.renderTurnstile();
+        script.onerror = () => console.warn('Turnstile 脚本加载失败');
+        document.head.appendChild(script);
+    }
+
+    renderTurnstile() {
+        const el = document.getElementById('turnstileWidget');
+        if (!el || typeof turnstile === 'undefined') return;
+        this.turnstileWidgetId = turnstile.render(el, {
+            sitekey: this.turnstileSiteKey,
+            action: this.turnstileAction,
+            size: 'invisible',
+            callback: (token) => { this.turnstileToken = token; },
+            'expired-callback': () => { this.turnstileToken = null; },
+            'error-callback': () => { this.turnstileToken = null; return true; }
+        });
+        this.turnstileReady = true;
+    }
+
+    // 搜索前获取 token；缺失（过期/未生成）时重置 widget 触发重新执行并等待回调
+    async ensureTurnstileToken() {
+        if (!this.turnstileReady) return null;
+        if (this.turnstileToken) return this.turnstileToken;
+        try { turnstile.reset(this.turnstileWidgetId); } catch (e) {}
+        for (let i = 0; i < 20; i++) { // 最多等待4秒
+            await new Promise(resolve => setTimeout(resolve, 200));
+            if (this.turnstileToken) return this.turnstileToken;
+        }
+        return null;
+    }
+
+    // token 已消耗：重置 widget 为下一次搜索预生成新 token
+    afterSearchTurnstile() {
+        if (!this.turnstileReady) return;
+        this.turnstileToken = null;
+        try { turnstile.reset(this.turnstileWidgetId); } catch (e) {}
     }
 
     // 验证输入是否有效（至少2个非空格字符）
@@ -146,7 +216,10 @@ class DictApp {
         if (noCache) {
             console.log('Cache disabled by URL parameter');
         }
-        
+
+        // Turnstile token（启用时必带；token 单次使用，用后由 finally 重置续发）
+        const turnstileToken = await this.ensureTurnstileToken();
+
         this.showLoading();
         this.clearResults();
         this.hideError();
@@ -160,7 +233,8 @@ class DictApp {
                 body: JSON.stringify({
                     query: query,
                     type: searchType,
-                    noCache: noCache
+                    noCache: noCache,
+                    ...(turnstileToken ? { 'cf-turnstile-response': turnstileToken } : {})
                 })
             });
 
@@ -180,6 +254,7 @@ class DictApp {
         } catch (error) {
             this.showError('搜索出错: ' + error.message);
         } finally {
+            this.afterSearchTurnstile();
             this.hideLoading();
         }
     }

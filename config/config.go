@@ -8,13 +8,23 @@ import (
 )
 
 type Config struct {
-	Database      DatabaseConfig      `yaml:"database"`
-	Tables        TablesConfig        `yaml:"tables"`
-	Fields        FieldsConfig        `yaml:"fields"`
-	Server        ServerConfig        `yaml:"server"`
-	Cache         CacheConfig         `yaml:"cache"`
-	Log           LogConfig           `yaml:"log"`
-	Security      SecurityConfig      `yaml:"security"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Tables     TablesConfig     `yaml:"tables"`
+	Fields     FieldsConfig     `yaml:"fields"`
+	Server     ServerConfig     `yaml:"server"`
+	Cache      CacheConfig      `yaml:"cache"`
+	Log        LogConfig        `yaml:"log"`
+	Security   SecurityConfig   `yaml:"security"`
+	Turnstile  TurnstileConfig  `yaml:"turnstile"`
+}
+
+type TurnstileConfig struct {
+	// Enabled 为 true 且 secret 非空时，/api/search 强制校验 Turnstile token
+	Enabled   bool     `yaml:"enabled"`
+	SiteKey   string   `yaml:"site_key"`    // 前端渲染用（公开值）
+	SecretKey string   `yaml:"secret_key"`  // 建议留空改用环境变量 TURNSTILE_SECRET
+	Action    string   `yaml:"action"`      // 前端 data-action，校验时必须匹配
+	Hostnames []string `yaml:"hostnames"`   // siteverify 返回的 hostname 白名单，为空则不校验
 }
 
 type SecurityConfig struct {
@@ -105,4 +115,12 @@ func (c *Config) GetDSN() string {
 		c.Database.Host,
 		c.Database.Port,
 		c.Database.DBName)
+}
+
+// TurnstileSecret 返回 Turnstile secret key，环境变量 TURNSTILE_SECRET 优先于配置文件
+func (c *Config) TurnstileSecret() string {
+	if secret := os.Getenv("TURNSTILE_SECRET"); secret != "" {
+		return secret
+	}
+	return c.Turnstile.SecretKey
 }
