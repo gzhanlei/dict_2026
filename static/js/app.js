@@ -10,6 +10,8 @@ class DictApp {
         this.feedbackSection = document.getElementById('feedbackSection');
 
         // Cloudflare Turnstile 状态（启用时由 /api/config 驱动）
+        this.turnstileConfigResolved = false; // /api/config 已返回（enabled 决策可用）
+        this.turnstileEnabled = false;    // 服务端已启用人机校验（/api/config 返回 enabled）
         this.turnstileReady = false;      // 脚本已加载且 widget 已渲染
         this.turnstileToken = null;       // 当前可用 token（单次使用）
         this.turnstileWidgetId = null;
@@ -33,12 +35,15 @@ class DictApp {
             const data = await response.json();
             const ts = data.turnstile;
             if (ts && ts.enabled && ts.site_key) {
+                this.turnstileEnabled = true;
                 this.turnstileSiteKey = ts.site_key;
                 this.turnstileAction = ts.action || 'search';
                 this.setupTurnstile();
             }
         } catch (e) {
             // 配置接口不可用：按未启用处理
+        } finally {
+            this.turnstileConfigResolved = true; // 无论结果如何，等待方可解除
         }
     }
 
@@ -67,16 +72,34 @@ class DictApp {
         this.turnstileReady = true;
     }
 
-    // 搜索前获取 token；缺失（过期/未生成）时重置 widget 触发重新执行并等待回调
-    async ensureTurnstileToken() {
-        if (!this.turnstileReady) return null;
-        if (this.turnstileToken) return this.turnstileToken;
-        try { turnstile.reset(this.turnstileWidgetId); } catch (e) {}
-        for (let i = 0; i < 20; i++) { // 最多等待4秒
-            await new Promise(resolve => setTimeout(resolve, 200));
-            if (this.turnstileToken) return this.turnstileToken;
+    // 搜索前获取 token。
+    // 关键：深链接直达（如 /both/texas）会在页面加载瞬间自动触发搜索，
+    // 此时 /api/config、widget 脚本、token 都可能尚未就绪——必须依次等待
+    // （上限 maxWaitMs）而不是立即裸发（裸发会被服务端403拒绝，误伤真人）
+    async ensureTurnstileToken(maxWaitMs = 10000) {
+        const deadline = Date.now() + maxWaitMs;
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        // 0) 等 /api/config 决策返回（深链接自动搜索会先于配置到达构造检查点）
+        while (!this.turnstileConfigResolved && Date.now() < deadline) {
+            await sleep(100);
         }
-        return null;
+        if (!this.turnstileEnabled) return null; // 明确未启用：无需token
+
+        // 1) 等 widget 就绪（脚本加载 + render 完成）
+        while (!this.turnstileReady && Date.now() < deadline) {
+            await sleep(200);
+        }
+        if (!this.turnstileReady) return null; // 超时仍未就绪（如CF不可达），放弃等待
+
+        // 2) 已有token直接用；没有则 reset 触发重新执行并等待回调
+        if (!this.turnstileToken) {
+            try { turnstile.reset(this.turnstileWidgetId); } catch (e) {}
+        }
+        while (!this.turnstileToken && Date.now() < deadline) {
+            await sleep(200);
+        }
+        return this.turnstileToken;
     }
 
     // token 已消耗：重置 widget 为下一次搜索预生成新 token
@@ -241,12 +264,23 @@ class DictApp {
             const data = await response.json();
             console.log('API Response:', data);
 
+            // 人机校验403：页面可能在服务端启用前加载（旧标签页/过期widget），
+            // 自动刷新一次拉取新配置并重新执行搜索；sessionStorage 防止刷新循环
+            if (!response.ok && response.status === 403 && data.error && data.error.indexOf('人机验证') !== -1) {
+                if (!sessionStorage.getItem('tsAutoReload')) {
+                    sessionStorage.setItem('tsAutoReload', '1');
+                    window.location.reload();
+                    return;
+                }
+            }
+
             if (!response.ok) {
                 throw new Error(data.error || '搜索失败');
             }
 
             if (data.success && data.data) {
                 console.log('Displaying results:', data.data);
+                sessionStorage.removeItem('tsAutoReload'); // 成功后允许未来的一次性自愈刷新
                 this.displayResults(data.data, query, searchType);
             } else {
                 this.showNoResults(query);
