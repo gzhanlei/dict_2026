@@ -13,14 +13,16 @@ import (
 )
 
 type CacheData struct {
-	Query               string                   `json:"query"`
-	Type                string                   `json:"type"`
-	Language            string                   `json:"language"`
-	Timestamp           int64                    `json:"timestamp"`
-	Data                map[string]interface{}   `json:"data"`
-	Tabs                []string                 `json:"tabs,omitempty"`
-	TabResults          map[string][]SearchResult `json:"tab_results,omitempty"`
-	FullQueryNoRecord   string                   `json:"full_query_no_record,omitempty"`
+	Query  string                 `json:"query"`
+	Type   string                 `json:"type"`
+	Language string               `json:"language"`
+	Timestamp int64               `json:"timestamp"`
+	Data    map[string]interface{} `json:"data"`
+	Tabs    []string               `json:"tabs,omitempty"`
+	// TabResults 不加 omitempty：both 模式命中判断（hasBothTabData）依赖该字段存在，
+	// 空map若被省略会被当作旧格式缓存而强制回库（地名查询无人名结果时每次都绕过缓存）
+	TabResults        map[string][]SearchResult `json:"tab_results"`
+	FullQueryNoRecord string                    `json:"full_query_no_record,omitempty"`
 }
 
 type CacheService struct {
