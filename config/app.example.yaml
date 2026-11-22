@@ -28,7 +28,8 @@ server:
 
 cache:
   directory: "./cache"
-  expiration: 3600
+  # 6小时：词典数据按月换表，长TTL对爬虫重复词命中负缓存更有效
+  expiration: 21600
 
 log:
   directory: "./logs"
@@ -38,4 +39,8 @@ security:
   # 示例：["127.0.0.1", "10.0.0.0/8"] 或 ["0.0.0.0/0"] 信任所有
   trusted_proxies: [127.0.0.1]
   # API速率限制（每分钟请求数），0表示不限制
-  rate_limit: 60
+  rate_limit: 15
+  # 全局同时进行的未命中缓存搜索上限（0用默认4），保护共享数据库不被并发全表扫描拖垮
+  max_concurrent_searches: 4
+  # 单个IP同时进行的未命中缓存搜索上限（0用默认1）
+  max_concurrent_per_ip: 1
