@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -142,17 +144,35 @@ func SearchHandler(services *service.Services) gin.HandlerFunc {
 		}
 
 		// 保存查询记录（异步，不阻塞主流程）
-		go SaveQueryLog(services, req.Query, req.Type, GetClientIP(c, services.Config.Security.TrustedProxies))
+		clientIP := GetClientIP(c, services.Config.Security.TrustedProxies)
+		go SaveQueryLog(services, req.Query, req.Type, clientIP)
 
-		// 执行搜索，传递noCache参数
-		result, err := services.Search.SearchWithOptions(c.Request.Context(), req.Query, req.Type, req.NoCache)
+		// 执行搜索，传递noCache参数；记录耗时与来源，便于排查爬虫/慢查询
+		start := time.Now()
+		result, err := services.Search.SearchWithOptions(c.Request.Context(), req.Query, req.Type, req.NoCache, clientIP)
+		duration := time.Since(start)
+
 		if err != nil {
+			// 并发闸门拒绝：返回429，让爬虫退避而非堆积
+			if errors.Is(err, service.ErrSearchBusy) {
+				log.Printf("search ip=%s type=%s q=%q dur=%dms busy_reject", clientIP, req.Type, req.Query, duration.Milliseconds())
+				c.JSON(http.StatusTooManyRequests, SearchResponse{
+					Success: false,
+					Error:   "Too many concurrent searches, please try again later",
+				})
+				return
+			}
+			log.Printf("search ip=%s type=%s q=%q dur=%dms error=%v", clientIP, req.Type, req.Query, duration.Milliseconds(), err)
 			c.JSON(http.StatusInternalServerError, SearchResponse{
 				Success: false,
 				Error:   "Search failed",
 			})
 			return
 		}
+
+		log.Printf("search ip=%s type=%s lang=%s q=%q dur=%dms cache=%v parts=%d names=%d places=%d",
+			clientIP, req.Type, result.Language, req.Query, duration.Milliseconds(),
+			result.Cache, len(result.Tabs), len(result.Names), len(result.Places))
 
 		c.JSON(http.StatusOK, SearchResponse{
 			Success: true,
@@ -163,10 +183,11 @@ func SearchHandler(services *service.Services) gin.HandlerFunc {
 
 // HealthResponse 健康检查响应
 type HealthResponse struct {
-	Status    string `json:"status"`
-	Database  string `json:"database"`
-	Cache     string `json:"cache"`
-	Timestamp int64  `json:"timestamp"`
+	Status    string                           `json:"status"`
+	Database  string                           `json:"database"`
+	Cache     string                           `json:"cache"`
+	Timestamp int64                            `json:"timestamp"`
+	Metrics   *service.SearchMetricsSnapshot   `json:"metrics,omitempty"`
 }
 
 // HealthHandler 健康检查处理器
@@ -196,6 +217,12 @@ func HealthHandler(services *service.Services) gin.HandlerFunc {
 		} else {
 			response.Cache = "not initialized"
 			response.Status = "degraded"
+		}
+
+		// 附加搜索计数器（累计值，用于观测限流/缓存/闸门效果）
+		if services.Search != nil {
+			snapshot := services.Search.Metrics()
+			response.Metrics = &snapshot
 		}
 
 		statusCode := http.StatusOK

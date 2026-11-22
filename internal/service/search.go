@@ -42,12 +42,16 @@ type SearchResponse struct {
 	TabResults          map[string][]SearchResult `json:"tab_results,omitempty"`
 	FullQueryNoRecord   string                    `json:"full_query_no_record,omitempty"`
 	Cache               bool                      `json:"cache"`
+	// Language 检测出的查询语言（zh/ja/en），仅用于服务端日志，不输出到JSON
+	Language string `json:"-"`
 }
 
 type SearchService struct {
 	db     *database.Connection
 	cache  *CacheService
 	config *config.Config
+	guard  *SearchGuard
+	metrics *SearchMetrics
 
 	// cleanFieldUnavailable 标记预清洗查询列不可用（如云端DDL未执行、新表未包含该列），
 	// 置位后本进程内一直走 REPLACE 回退路径，避免每次查询都失败重试
@@ -66,10 +70,17 @@ func NewSearchService(db *database.Connection, cache *CacheService, cfg *config.
 	}
 
 	return &SearchService{
-		db:     db,
-		cache:  cache,
-		config: cfg,
+		db:      db,
+		cache:   cache,
+		config:  cfg,
+		guard:   NewSearchGuard(cfg.Security.MaxConcurrentSearches, cfg.Security.MaxConcurrentPerIP),
+		metrics: &SearchMetrics{},
 	}, nil
+}
+
+// Metrics 返回搜索计数器快照，供 /api/health 输出
+func (s *SearchService) Metrics() SearchMetricsSnapshot {
+	return s.metrics.Snapshot()
 }
 
 // getTableName returns the actual table name from config based on search type
@@ -204,12 +215,15 @@ func (s *SearchService) splitQuery(query string) []string {
 }
 
 // 主搜索方法
-func (s *SearchService) Search(ctx context.Context, query, searchType string) (*SearchResponse, error) {
-	return s.SearchWithOptions(ctx, query, searchType, false)
+func (s *SearchService) Search(ctx context.Context, query, searchType, clientIP string) (*SearchResponse, error) {
+	return s.SearchWithOptions(ctx, query, searchType, false, clientIP)
 }
 
 // 带选项的搜索方法
-func (s *SearchService) SearchWithOptions(ctx context.Context, query, searchType string, noCache bool) (*SearchResponse, error) {
+// clientIP 用于单IP并发闸门（未命中缓存的数据库搜索才计入额度）
+func (s *SearchService) SearchWithOptions(ctx context.Context, query, searchType string, noCache bool, clientIP string) (*SearchResponse, error) {
+	s.metrics.Requests.Add(1)
+
 	// 处理查询字符串 (use util functions directly instead of wrapper methods)
 	language := util.DetectLanguage(query)
 	processedQuery := util.ProcessQueryByLanguage(query, language)
@@ -222,6 +236,7 @@ func (s *SearchService) SearchWithOptions(ctx context.Context, query, searchType
 			if searchType == "both" && !hasBothTabData(cached) {
 				// 当作未命中，走数据库
 			} else {
+				s.metrics.CacheHits.Add(1)
 				return &SearchResponse{
 					Names:             s.convertToSearchResults(cached.Data["names"]),
 					Places:            s.convertToSearchResults(cached.Data["places"]),
@@ -229,16 +244,29 @@ func (s *SearchService) SearchWithOptions(ctx context.Context, query, searchType
 					TabResults:        cached.TabResults,
 					FullQueryNoRecord: cached.FullQueryNoRecord,
 					Cache:             true,
+					Language:          cached.Language,
 				}, nil
 			}
 		}
 	}
 
-	// 从数据库查询
-	response, err := s.searchFromDatabase(ctx, processedQuery, searchType, language)
-	if err != nil {
+	// 并发闸门：只约束未命中缓存的数据库搜索，防止并发全表扫描拖垮共享数据库
+	if err := s.guard.TryAcquire(clientIP); err != nil {
+		s.metrics.BusyRejects.Add(1)
 		return nil, err
 	}
+	defer s.guard.Release(clientIP)
+
+	// 从数据库查询
+	s.metrics.DBSearches.Add(1)
+	s.metrics.Active.Add(1)
+	defer s.metrics.Active.Add(-1)
+	response, err := s.searchFromDatabase(ctx, processedQuery, searchType, language)
+	if err != nil {
+		s.metrics.DBErrors.Add(1)
+		return nil, err
+	}
+	response.Language = language
 
 	// 如果不禁用缓存，保存到缓存
 	if !noCache {
@@ -391,6 +419,7 @@ func (s *SearchService) searchTable(ctx context.Context, queryParts []string, la
 
 		// 每个子查询使用带超时的context，避免慢查询长期占用数据库连接
 		qCtx, cancel := context.WithTimeout(ctx, queryTimeout)
+		s.metrics.SQLQueries.Add(1)
 		rows, err := s.db.DB.QueryContext(qCtx, sqlQuery, args...)
 		// 预清洗列缺失（DDL未执行或新表未包含该列）时回退到REPLACE查询，保证可用性；
 		// 结果集与预清洗列完全一致，只是查询较慢
@@ -398,6 +427,7 @@ func (s *SearchService) searchTable(ctx context.Context, queryParts []string, la
 			log.Printf("查询列 %s 不存在，回退到REPLACE查询方式: %v", queryFieldClean, err)
 			s.cleanFieldUnavailable.Store(true)
 			sqlQuery = buildSearchQuerySQL(tableName, parenCleanedExpr(queryField), nameField, nationField, translationField)
+			s.metrics.SQLQueries.Add(1)
 			rows, err = s.db.DB.QueryContext(qCtx, sqlQuery, args...)
 		}
 		if err != nil {

@@ -20,6 +20,8 @@ type Config struct {
 type SecurityConfig struct {
 	TrustedProxies []string `yaml:"trusted_proxies"` // 可信代理IP列表，为空时信任所有
 	RateLimit      int      `yaml:"rate_limit"`      // 每分钟请求限制，0表示不限制
+	MaxConcurrentSearches int `yaml:"max_concurrent_searches"` // 全局同时进行的未命中缓存搜索上限，<=0用默认4
+	MaxConcurrentPerIP    int `yaml:"max_concurrent_per_ip"`   // 单IP同时进行的未命中缓存搜索上限，<=0用默认1
 }
 
 type DatabaseConfig struct {
@@ -75,10 +77,17 @@ func LoadConfig(configPath string) (*Config, error) {
 		config.Cache.Directory = "./cache"
 	}
 	if config.Cache.Expiration == 0 {
-		config.Cache.Expiration = 3600
+		config.Cache.Expiration = 21600
 	}
 	if config.Log.Directory == "" {
 		config.Log.Directory = "./logs"
+	}
+	// 并发闸门上限：0 视为未配置，使用默认值（全局4、单IP1）
+	if config.Security.MaxConcurrentSearches == 0 {
+		config.Security.MaxConcurrentSearches = 4
+	}
+	if config.Security.MaxConcurrentPerIP == 0 {
+		config.Security.MaxConcurrentPerIP = 1
 	}
 
 	return &config, nil

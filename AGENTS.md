@@ -143,5 +143,19 @@ The `name_for_query_*` field in the database stores values with **leading and tr
 If config values are missing, the following defaults apply (see `config/config.go`):
 - Server port: 8080
 - Cache directory: `./cache`
-- Cache expiration: 3600 seconds
+- Cache expiration: 21600 seconds (6h)
 - Log directory: `./logs`
+- Global concurrent uncached searches: 4 (`security.max_concurrent_searches`)
+- Per-IP concurrent uncached searches: 1 (`security.max_concurrent_per_ip`)
+
+### Search Concurrency Guards
+Uncached (database) searches pass through two non-blocking gates before hitting MySQL:
+- **Global gate**: at most `security.max_concurrent_searches` concurrent DB searches process-wide
+- **Per-IP gate**: at most `security.max_concurrent_per_ip` concurrent DB searches per client IP
+
+When either gate is full the request fails fast with HTTP 429 (`ErrSearchBusy` in
+`internal/service/guard.go`), protecting the shared database from concurrent full-table scans.
+Cache hits bypass the gates entirely. Cumulative counters (requests, cache hits, DB searches,
+busy rejects, DB errors, SQL sub-queries, active searches) are exposed on `/api/health`
+under `metrics`, and every search logs one structured line (`search ip=... dur=...ms cache=...`)
+for diagnosing crawler traffic.

@@ -96,6 +96,14 @@ log:
 	if config.Cache.Expiration != 3600 {
 		t.Errorf("Expected cache expiration to be 3600, got %d", config.Cache.Expiration)
 	}
+
+	// 验证未配置 security 并发参数时的默认值（全局4、单IP1）
+	if config.Security.MaxConcurrentSearches != 4 {
+		t.Errorf("Expected default MaxConcurrentSearches to be 4, got %d", config.Security.MaxConcurrentSearches)
+	}
+	if config.Security.MaxConcurrentPerIP != 1 {
+		t.Errorf("Expected default MaxConcurrentPerIP to be 1, got %d", config.Security.MaxConcurrentPerIP)
+	}
 }
 
 func TestLoadConfigWithMissingFile(t *testing.T) {
