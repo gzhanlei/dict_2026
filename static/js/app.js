@@ -65,7 +65,10 @@ class DictApp {
             sitekey: this.turnstileSiteKey,
             action: this.turnstileAction,
             size: 'invisible',
-            callback: (token) => { this.turnstileToken = token; },
+            callback: (token) => {
+                this.turnstileToken = token;
+                this.turnstileTokenAt = Date.now();
+            },
             'expired-callback': () => { this.turnstileToken = null; },
             'error-callback': () => { this.turnstileToken = null; return true; }
         });
@@ -92,7 +95,11 @@ class DictApp {
         }
         if (!this.turnstileReady) return null; // 超时仍未就绪（如CF不可达），放弃等待
 
-        // 2) 已有token直接用；没有则 reset 触发重新执行并等待回调
+        // 2) token 有效期300s（timeout-or-duplicate/expired），超过240s视为陈旧：
+        //    invisible widget 的 expired-callback 不可靠，按时间主动废弃
+        if (this.turnstileToken && Date.now() - (this.turnstileTokenAt || 0) > 240000) {
+            this.turnstileToken = null;
+        }
         if (!this.turnstileToken) {
             try { turnstile.reset(this.turnstileWidgetId); } catch (e) {}
         }

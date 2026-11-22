@@ -176,8 +176,20 @@ for diagnosing crawler traffic.
   and rejection happens before query logging or any database work.
 - The CSP in `internal/middleware/security.go` must keep `https://challenges.cloudflare.com`
   allowed under script-src/frame-src/connect-src, or the widget silently fails to load.
+- **Mainland-China availability caveat (2026-11-22)**: some CN carriers intermittently stall
+  `challenges.cloudflare.com/cdn-cgi/challenge-platform/*` (the widget iframe) while other paths
+  on the same host load fine — no error-callback fires, the token simply never arrives, and
+  enforced Turnstile randomly blocks real users. Frontend mitigations: wait up to 10s for a
+  token (covers deep-link races too), discard stale tokens (>240s old; siteverify rejects them
+  as `timeout-or-duplicate`), auto-reload once on a 403. Enforcement was disabled after
+  confirmed real-user impact; re-enable only with this tradeoff in mind.
+- **Cache busting**: `static/index.html` references `app.js?v=<date><rev>`; bump the stamp every
+  time `static/js/app.js` changes. `/static/` is served by nginx with `expires 5m` (dict vhost),
+  so unstamped JS edits take up to 5 minutes to propagate; stamped ones are immediate.
 - Local testing uses Cloudflare's test keys (invisible always-pass sitekey `1x00000000000000000000BB`,
   always-pass secret `1x0000000000000000000000000000000AA`, always-fail secret `2x0000000000000000000000000000000AA`).
+  Test sitekeys skip domain verification, so they work on localhost/127.0.0.1; real sitekeys
+  require the domain to be registered on the widget.
 
 ### queries 表（查询日志）保留策略
 `/api/search` 每个通过校验的请求都会异步写一行 `queries`（含缓存命中——INSERT 在搜索执行前，
