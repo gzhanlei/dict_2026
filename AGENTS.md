@@ -178,3 +178,18 @@ for diagnosing crawler traffic.
   allowed under script-src/frame-src/connect-src, or the widget silently fails to load.
 - Local testing uses Cloudflare's test keys (invisible always-pass sitekey `1x00000000000000000000BB`,
   always-pass secret `1x0000000000000000000000000000000AA`, always-fail secret `2x0000000000000000000000000000000AA`).
+
+### queries 表（查询日志）保留策略
+`/api/search` 每个通过校验的请求都会异步写一行 `queries`（含缓存命中——INSERT 在搜索执行前，
+见 `SaveQueryLog`；Turnstile/限流/参数校验拒绝的不记，429/500 会记）。表只增不减，维护方案
+（脚本已部署到服务器 `/data/www/dict20260412/scripts/`，root crontab 驱动）：
+- `scripts/cleanup_queries.sh`：分批 DELETE 超过 180 天的明细（每日 04:00）。分批是避免大事务
+  锁表/binlog 一次性膨胀；`RETENTION_DAYS`/`BATCH`/`BATCH_SLEEP` 可用环境变量覆盖。前提是
+  `queries.query_time` 上有 `idx_query_time` 索引，否则每批 DELETE 都是全表扫描。
+- `scripts/rollup_queries_daily.sh`：把"昨天"聚合成 `queries_daily` 一行
+  （day, query_type, cnt, distinct_ips, distinct_words；每日 00:05，REPLACE 幂等）。
+  长期趋势统计靠这张表，明细清理不影响它。
+- 服务器凭据在 `/root/.dict_maint.cnf`（0600，从 `config/app.yaml` 解析生成），脚本经
+  `--defaults-extra-file` 使用，密码不进脚本与 crontab。
+- InnoDB 的 DELETE 只标记删除，文件不立即缩小；空间会被新写入复用，稳态后表大小不再增长。
+  首次大清理后如需立即回收，可低峰执行一次 `OPTIMIZE TABLE queries`。
