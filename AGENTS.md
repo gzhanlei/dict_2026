@@ -186,9 +186,16 @@ for diagnosing crawler traffic.
 - `scripts/cleanup_queries.sh`：分批 DELETE 超过 180 天的明细（每日 04:00）。分批是避免大事务
   锁表/binlog 一次性膨胀；`RETENTION_DAYS`/`BATCH`/`BATCH_SLEEP` 可用环境变量覆盖。前提是
   `queries.query_time` 上有 `idx_query_time` 索引，否则每批 DELETE 都是全表扫描。
-- `scripts/rollup_queries_daily.sh`：把"昨天"聚合成 `queries_daily` 一行
-  （day, query_type, cnt, distinct_ips, distinct_words；每日 00:05，REPLACE 幂等）。
-  长期趋势统计靠这张表，明细清理不影响它。
+- `scripts/rollup_queries_daily.sh`：把"昨天"聚合成两张表（每日 00:05，均 REPLACE 幂等，
+  重跑不会翻倍）：
+  - `queries_daily`（day, query_type, cnt, distinct_ips, distinct_words）——每日总量趋势；
+  - `queries_words_daily`（day, query_type, query_word, cnt, distinct_ips）——每词每日
+    一行，"最热查询词"统计从这张表做（明细清理后历史仍在）：
+    `SELECT query_word, SUM(cnt) FROM queries_words_daily WHERE query_word <> ''
+     GROUP BY query_word ORDER BY 2 DESC LIMIT 20;`（`<> ''` 排除历史爬虫刷的空白词）。
+    该表 collation 必须是 `utf8mb4_general_ci`（区分重音，与源表 utf8mb3_general_ci
+    语义一致）；默认的 `utf8mb4_0900_ai_ci` 会把 jose/josé 这类重音变体折叠成同一个
+    PK 键，REPLACE 时静默丢计数（2026-11-22 回填实测）。
 - 服务器凭据在 `/root/.dict_maint.cnf`（0600，从 `config/app.yaml` 解析生成），脚本经
   `--defaults-extra-file` 使用，密码不进脚本与 crontab。
 - InnoDB 的 DELETE 只标记删除，文件不立即缩小；空间会被新写入复用，稳态后表大小不再增长。
